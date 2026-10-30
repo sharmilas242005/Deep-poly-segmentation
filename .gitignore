@@ -1,0 +1,54 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Environments
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Checkpoints and Model Weights
+*.h5
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+models_checkpoints/
+ml/checkpoints/
+
+# Datasets
+data/
+datasets/
+Kvasir-SEG/
+1ST DATASET/
+bkai_igh_neopoly/
+*.zip
+*.tar.gz
+
+# Node / Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/.env.local
+
+# Backend outputs & temporary uploads
+outputs/
+uploads/
+scratch/
+experiments/*.log
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

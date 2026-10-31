@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Deep Polyp Segmentation: Comparative Clinical Research Platform
 
 [![PyTorch 2.3+](https://img.shields.io/badge/PyTorch-2.3%2B-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/)
@@ -289,3 +288,5 @@ When referencing this work:
   year={2026},
   note={PyTorch, FastAPI, and Next.js Implementation}
 }
+```
+# Deep-poly-segmentation

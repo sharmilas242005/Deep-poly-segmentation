@@ -68,8 +68,17 @@ class TrainingConfig:
 
 
 class PolypTrainer:
-    def __init__(self, config: TrainingConfig):
+    def __init__(
+        self,
+        config: TrainingConfig,
+        progress_callback: Optional[Any] = None,
+        cancel_check: Optional[Any] = None,
+        update_best_checkpoint: bool = True
+    ):
         self.config = config
+        self.progress_callback = progress_callback
+        self.cancel_check = cancel_check
+        self.update_best_checkpoint = update_best_checkpoint
         self._set_seed(config.random_seed)
 
         self.run_dir = os.path.join(
@@ -94,7 +103,8 @@ class PolypTrainer:
             "train_loss": [],
             "val_loss": [],
             "val_dice": [],
-            "val_iou": []
+            "val_iou": [],
+            "learning_rate": []
         }
 
     def _set_seed(self, seed: int):
@@ -109,6 +119,8 @@ class PolypTrainer:
         count = 0
 
         for batch in dataloader:
+            if self.cancel_check and self.cancel_check():
+                break
             images = batch["image"].to(self.config.device)
             masks = batch["mask"].to(self.config.device)
 
@@ -159,13 +171,20 @@ class PolypTrainer:
         """
         Executes full training pipeline or limited smoke test.
         """
-        # Validate dataset
-        report = validate_kvasir_dataset(self.config.dataset_dir)
+        # Validate dataset (fallback to sample_images if kvasir_seg is not present)
+        dataset_dir = self.config.dataset_dir
+        report = validate_kvasir_dataset(dataset_dir)
         if not report.is_valid:
-            return {
-                "success": False,
-                "error": f"Invalid or missing dataset at '{self.config.dataset_dir}'. Found {len(report.valid_pairs)} valid pairs."
-            }
+            fallback_dir = "data/sample_images"
+            fallback_report = validate_kvasir_dataset(fallback_dir)
+            if fallback_report.is_valid:
+                dataset_dir = fallback_dir
+                report = fallback_report
+            else:
+                return {
+                    "success": False,
+                    "error": f"Invalid or missing dataset at '{self.config.dataset_dir}'. Found {len(report.valid_pairs)} valid pairs."
+                }
 
         train_pairs, val_pairs, _ = get_deterministic_splits(
             report.valid_pairs, seed=self.config.random_seed
@@ -178,20 +197,27 @@ class PolypTrainer:
             val_pairs, image_size=(self.config.image_size, self.config.image_size), is_training=False
         )
 
-        train_loader = DataLoader(train_ds, batch_size=self.config.batch_size, shuffle=True)
-        val_loader = DataLoader(val_ds, batch_size=self.config.batch_size, shuffle=False)
+        # Batch size clamped to available training pairs
+        actual_batch_size = min(self.config.batch_size, max(len(train_pairs), 1))
+        train_loader = DataLoader(train_ds, batch_size=actual_batch_size, shuffle=True)
+        val_loader = DataLoader(val_ds, batch_size=actual_batch_size, shuffle=False)
 
         best_dice = -1.0
+        best_iou = -1.0
         best_checkpoint_path = os.path.join(self.run_dir, "best_checkpoint.pt")
         patience_counter = 0
 
         for epoch in range(1, self.config.epochs + 1):
+            if self.cancel_check and self.cancel_check():
+                break
+
             train_loss = self.train_epoch(train_loader)
             val_results = self.validate(val_loader)
 
             val_dice = val_results["val_dice"]
             val_loss = val_results["val_loss"]
             val_iou = val_results["val_iou"]
+            lr = float(self.optimizer.param_groups[0]["lr"])
 
             self.scheduler.step(val_dice)
 
@@ -200,10 +226,13 @@ class PolypTrainer:
             self.history["val_loss"].append(round(val_loss, 4))
             self.history["val_dice"].append(round(val_dice, 4))
             self.history["val_iou"].append(round(val_iou, 4))
+            self.history["learning_rate"].append(lr)
 
             # Save best checkpoint
-            if val_dice > best_dice:
+            is_best = val_dice > best_dice
+            if is_best:
                 best_dice = val_dice
+                best_iou = val_iou
                 patience_counter = 0
                 torch.save({
                     "epoch": epoch,
@@ -212,10 +241,46 @@ class PolypTrainer:
                     "best_iou": val_iou,
                     "config": self.config.to_dict()
                 }, best_checkpoint_path)
+
+                # Safely update primary checkpoint in ml/checkpoints/ with .bak backup
+                if self.update_best_checkpoint:
+                    main_ckpt_dir = "ml/checkpoints"
+                    os.makedirs(main_ckpt_dir, exist_ok=True)
+                    main_ckpt_path = os.path.join(main_ckpt_dir, f"{self.config.model_name}_best.pt")
+                    if os.path.exists(main_ckpt_path):
+                        import shutil
+                        bak_path = main_ckpt_path + ".bak"
+                        if not os.path.exists(bak_path):
+                            shutil.copy2(main_ckpt_path, bak_path)
+                    torch.save({
+                        "model_name": self.config.model_name,
+                        "state_dict": self.model.state_dict(),
+                        "epoch": epoch,
+                        "best_dice": best_dice,
+                        "best_iou": val_iou,
+                        "trained_run": self.run_dir
+                    }, main_ckpt_path)
             else:
                 patience_counter += 1
-                if patience_counter >= self.config.early_stopping_patience:
-                    break
+
+            # Dispatch live progress update
+            if self.progress_callback:
+                self.progress_callback({
+                    "epoch": epoch,
+                    "total_epochs": self.config.epochs,
+                    "train_loss": round(float(train_loss), 4),
+                    "val_loss": round(float(val_loss), 4),
+                    "val_dice": round(float(val_dice), 4),
+                    "val_iou": round(float(val_iou), 4),
+                    "learning_rate": lr,
+                    "best_dice": round(float(best_dice), 4),
+                    "progress_percent": round((epoch / self.config.epochs) * 100.0, 1),
+                    "dataset_used": dataset_dir,
+                    "dataset_pairs": len(report.valid_pairs)
+                })
+
+            if patience_counter >= self.config.early_stopping_patience:
+                break
 
         # Save training history JSON
         history_path = os.path.join(self.run_dir, "training_history.json")
@@ -224,13 +289,19 @@ class PolypTrainer:
                 "config": self.config.to_dict(),
                 "history": self.history,
                 "best_dice": best_dice,
-                "best_checkpoint": best_checkpoint_path
+                "best_iou": best_iou,
+                "best_checkpoint": best_checkpoint_path,
+                "dataset_used": dataset_dir,
+                "dataset_pairs": len(report.valid_pairs)
             }, f, indent=2)
 
         return {
             "success": True,
             "run_dir": self.run_dir,
             "best_dice": best_dice,
+            "best_iou": best_iou,
             "best_checkpoint": best_checkpoint_path,
+            "dataset_used": dataset_dir,
+            "dataset_pairs": len(report.valid_pairs),
             "history": self.history
         }

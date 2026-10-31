@@ -93,3 +93,59 @@ class ExperimentRecord(BaseModel):
     parameters_m: Optional[float] = None
     source: str  # "Historical Published Reference (2023-2024)" vs "Newly Evaluated PyTorch"
     status: str
+
+
+class TrainStartRequest(BaseModel):
+    model_name: str = "segformer"
+    epochs: int = 10
+    batch_size: int = 4
+    learning_rate: float = 1e-4
+    dataset_source: str = "auto"
+    early_stopping_patience: int = 5
+
+
+class TrainingHistoryStep(BaseModel):
+    epoch: int
+    train_loss: float
+    val_loss: float
+    val_dice: float
+    val_iou: float
+    learning_rate: float
+
+
+class TrainingStatusResponse(BaseModel):
+    status: str  # "idle", "running", "completed", "stopped", "failed"
+    model_name: Optional[str] = None
+    current_epoch: int = 0
+    total_epochs: int = 0
+    progress_percent: float = 0.0
+    train_loss: Optional[float] = None
+    val_loss: Optional[float] = None
+    val_dice: Optional[float] = None
+    val_iou: Optional[float] = None
+    learning_rate: Optional[float] = None
+    best_dice: Optional[float] = None
+    elapsed_time_sec: float = 0.0
+    history: List[TrainingHistoryStep] = []
+    error_message: Optional[str] = None
+    checkpoint_path: Optional[str] = None
+    dataset_used: Optional[str] = None
+    dataset_pairs: int = 0
+
+
+class EvaluationResponse(BaseModel):
+    model_name: str
+    inference_time_ms: float
+    has_ground_truth: bool
+    metrics: Optional[Dict[str, float]] = None
+    polyp_detected: bool
+    polyp_area_percentage: float
+    detected_regions_count: int
+    original_image_data_uri: str
+    mask_data_uri: str
+    ground_truth_mask_data_uri: Optional[str] = None
+    overlay_data_uri: str
+    disclaimer: str = Field(
+        default="RESEARCH PROTOTYPE ONLY: This software is for academic benchmarking and algorithmic comparison. It is NOT certified for diagnostic use without clinical specialist verification."
+    )
+

@@ -80,6 +80,8 @@ interface PredictionResult {
   mask_data_uri: string;
   overlay_data_uri: string;
   disclaimer: string;
+  metrics?: Record<string, number> | null;
+  has_ground_truth?: boolean;
 }
 
 interface ExperimentRecord {
@@ -111,6 +113,7 @@ export default function DeepPolypDashboard() {
   const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null);
   const [selectedImageDataUri, setSelectedImageDataUri] = useState<string>("");
   const [activeSampleTitle, setActiveSampleTitle] = useState<string>("");
+  const [activeSampleMaskDataUri, setActiveSampleMaskDataUri] = useState<string>("");
   const [prediction, setPrediction] = useState<PredictionResult | null>(null);
   const [isInferring, setIsInferring] = useState<boolean>(false);
   const [viewMode, setViewMode] = useState<"tri" | "overlay" | "mask" | "original">("tri");
@@ -124,14 +127,26 @@ export default function DeepPolypDashboard() {
   const [benchmarkFilter, setBenchmarkFilter] = useState<"all" | "modern" | "historical">("all");
   const [benchmarkSearch, setBenchmarkSearch] = useState<string>("");
 
-  // Training state
+  // Real PyTorch Training state
   const [trainModel, setTrainModel] = useState<string>("segformer");
-  const [trainEpochs, setTrainEpochs] = useState<number>(15);
-  const [trainBatchSize, setTrainBatchSize] = useState<number>(8);
-  const [trainLr, setTrainLr] = useState<number>(0.0001);
+  const [trainEpochs, setTrainEpochs] = useState<number>(10);
+  const [trainBatchSize, setTrainBatchSize] = useState<number>(4);
+  const [trainLr, setTrainLr] = useState<number>(0.0005);
+  const [trainDatasetSource, setTrainDatasetSource] = useState<string>("auto");
   const [trainHistory, setTrainHistory] = useState<any[]>([]);
-  const [isTrainingSim, setIsTrainingSim] = useState<boolean>(false);
-  const [simProgress, setSimProgress] = useState<number>(0);
+  const [isTraining, setIsTraining] = useState<boolean>(false);
+  const [trainingStatus, setTrainingStatus] = useState<string>("idle");
+  const [trainingProgress, setTrainingProgress] = useState<number>(0);
+  const [currentTrainLoss, setCurrentTrainLoss] = useState<number | null>(null);
+  const [currentValDice, setCurrentValDice] = useState<number | null>(null);
+  const [currentValIoU, setCurrentValIoU] = useState<number | null>(null);
+  const [currentLr, setCurrentLr] = useState<number | null>(null);
+  const [bestDice, setBestDice] = useState<number | null>(null);
+  const [elapsedTimeSec, setElapsedTimeSec] = useState<number>(0);
+  const [trainingError, setTrainingError] = useState<string | null>(null);
+  const [datasetUsed, setDatasetUsed] = useState<string | null>(null);
+  const [datasetPairs, setDatasetPairs] = useState<number>(0);
+  const trainingPollRef = useRef<NodeJS.Timeout | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -141,6 +156,13 @@ export default function DeepPolypDashboard() {
     fetchModels();
     fetchSamples();
     fetchExperiments();
+    pollTrainingStatus();
+
+    return () => {
+      if (trainingPollRef.current) {
+        clearInterval(trainingPollRef.current);
+      }
+    };
   }, []);
 
   const fetchHealth = async () => {
@@ -186,6 +208,7 @@ export default function DeepPolypDashboard() {
       if (data && data.length > 0) {
         setSamples(data);
         setSelectedImageDataUri(data[0].image_data_uri);
+        setActiveSampleMaskDataUri(data[0].mask_data_uri || "");
         setActiveSampleTitle(data[0].title);
         // Automatically run initial prediction on sample 1 so reviewer sees live CADe output immediately
         triggerPredictionWithDataUri(data[0].image_data_uri, "segformer", 0.50);
@@ -211,6 +234,7 @@ export default function DeepPolypDashboard() {
 
   const selectSample = (sample: SampleImage) => {
     setSelectedImageDataUri(sample.image_data_uri);
+    setActiveSampleMaskDataUri(sample.mask_data_uri || "");
     setSelectedImageFile(null);
     setActiveSampleTitle(sample.title);
     setPrediction(null);
@@ -221,6 +245,7 @@ export default function DeepPolypDashboard() {
     const file = e.target.files?.[0];
     if (file) {
       setSelectedImageFile(file);
+      setActiveSampleMaskDataUri(""); // Custom upload without ground truth mask
       setActiveSampleTitle(`Custom Upload: ${file.name}`);
       const reader = new FileReader();
       reader.onload = () => {
@@ -278,29 +303,64 @@ export default function DeepPolypDashboard() {
     setIsComparing(true);
 
     try {
-      const blob = await (await fetch(selectedImageDataUri)).blob();
-      const formData = new FormData();
-      formData.append("threshold", confidenceThreshold.toString());
-      formData.append("file", blob, "sample.jpg");
+      const imgBlob = await (await fetch(selectedImageDataUri)).blob();
+      const hasGt = Boolean(activeSampleMaskDataUri);
+      let maskBlob: Blob | null = null;
+      if (hasGt) {
+        maskBlob = await (await fetch(activeSampleMaskDataUri)).blob();
+      }
 
-      const res = await fetch("/api/compare", {
-        method: "POST",
-        body: formData,
-      });
+      const resultsMap: Record<string, PredictionResult> = {};
+      const modelNames = ["segformer", "unet", "linknet"];
 
-      if (res.ok) {
-        const data = await res.json();
-        setComparisonResults(data.results || {});
-      } else {
-        const directRes = await fetch("http://127.0.0.1:8000/api/compare", {
-          method: "POST",
-          body: formData,
-        });
-        if (directRes.ok) {
-          const data = await directRes.json();
-          setComparisonResults(data.results || {});
+      for (const mName of modelNames) {
+        const formData = new FormData();
+        formData.append("threshold", confidenceThreshold.toString());
+        formData.append("model_name", mName);
+        formData.append("file", imgBlob, "sample.jpg");
+
+        if (hasGt && maskBlob) {
+          formData.append("ground_truth_mask", maskBlob, "mask.png");
+          let evalRes = await fetch("/api/evaluate", { method: "POST", body: formData });
+          if (!evalRes.ok) {
+            evalRes = await fetch("http://127.0.0.1:8000/api/evaluate", { method: "POST", body: formData });
+          }
+          if (evalRes.ok) {
+            const evalData = await evalRes.json();
+            resultsMap[mName] = {
+              model_name: evalData.model_name,
+              inference_time_ms: evalData.inference_time_ms,
+              polyp_detected: evalData.polyp_detected,
+              polyp_area_percentage: evalData.polyp_area_percentage,
+              confidence_threshold: confidenceThreshold,
+              image_dimensions: { width: 256, height: 256 },
+              bounding_boxes: [],
+              detected_regions_count: evalData.detected_regions_count,
+              original_image_data_uri: evalData.original_image_data_uri,
+              mask_data_uri: evalData.mask_data_uri,
+              overlay_data_uri: evalData.overlay_data_uri,
+              disclaimer: evalData.disclaimer,
+              metrics: evalData.metrics,
+              has_ground_truth: evalData.has_ground_truth,
+            };
+          }
+        } else {
+          let predRes = await fetch("/api/predict", { method: "POST", body: formData });
+          if (!predRes.ok) {
+            predRes = await fetch("http://127.0.0.1:8000/api/predict", { method: "POST", body: formData });
+          }
+          if (predRes.ok) {
+            const predData = await predRes.json();
+            resultsMap[mName] = {
+              ...predData,
+              metrics: null,
+              has_ground_truth: false,
+            };
+          }
         }
       }
+
+      setComparisonResults(resultsMap);
     } catch (e) {
       console.error("Comparison error:", e);
     } finally {
@@ -308,36 +368,105 @@ export default function DeepPolypDashboard() {
     }
   };
 
-  const simulateTraining = () => {
-    setIsTrainingSim(true);
-    setTrainHistory([]);
-    setSimProgress(0);
-
-    const steps: any[] = [];
-    let curLoss = 0.58;
-    let curDice = 0.62;
-
-    const interval = setInterval(() => {
-      const epoch = steps.length + 1;
-      curLoss = Math.max(0.12, curLoss - Math.random() * 0.04);
-      curDice = Math.min(0.91, curDice + Math.random() * 0.03);
-      const curIoU = curDice / (2 - curDice);
-
-      const step = {
-        epoch,
-        train_loss: parseFloat(curLoss.toFixed(4)),
-        val_dice: parseFloat(curDice.toFixed(4)),
-        val_iou: parseFloat(curIoU.toFixed(4)),
-      };
-      steps.push(step);
-      setTrainHistory([...steps]);
-      setSimProgress(Math.round((epoch / trainEpochs) * 100));
-
-      if (epoch >= trainEpochs) {
-        clearInterval(interval);
-        setIsTrainingSim(false);
+  const pollTrainingStatus = async () => {
+    try {
+      let res = await fetch("/api/train/status");
+      if (!res.ok) {
+        res = await fetch("http://127.0.0.1:8000/api/train/status");
       }
-    }, 350);
+      if (res.ok) {
+        const data = await res.json();
+        setTrainingStatus(data.status);
+        setTrainingProgress(data.progress_percent || 0);
+        if (data.history && data.history.length > 0) {
+          setTrainHistory(data.history);
+        }
+        setCurrentTrainLoss(data.train_loss);
+        setCurrentValDice(data.val_dice);
+        setCurrentValIoU(data.val_iou);
+        setCurrentLr(data.learning_rate);
+        setBestDice(data.best_dice);
+        setElapsedTimeSec(data.elapsed_time_sec || 0);
+        setDatasetUsed(data.dataset_used);
+        setDatasetPairs(data.dataset_pairs || 0);
+        setTrainingError(data.error_message);
+
+        if (data.status === "running") {
+          setIsTraining(true);
+        } else {
+          setIsTraining(false);
+          if (trainingPollRef.current) {
+            clearInterval(trainingPollRef.current);
+            trainingPollRef.current = null;
+          }
+          if (data.status === "completed") {
+            fetchHealth();
+            fetchModels();
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("Error polling training status:", e);
+    }
+  };
+
+  const startRealTraining = async () => {
+    setIsTraining(true);
+    setTrainingStatus("running");
+    setTrainingError(null);
+    setTrainHistory([]);
+    setTrainingProgress(0);
+
+    try {
+      const payload = {
+        model_name: trainModel,
+        epochs: trainEpochs,
+        batch_size: trainBatchSize,
+        learning_rate: trainLr,
+        dataset_source: trainDatasetSource,
+        early_stopping_patience: 5,
+      };
+
+      let res = await fetch("/api/train/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        res = await fetch("http://127.0.0.1:8000/api/train/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      }
+
+      if (res.ok) {
+        if (trainingPollRef.current) clearInterval(trainingPollRef.current);
+        trainingPollRef.current = setInterval(pollTrainingStatus, 1000);
+      } else {
+        const err = await res.json();
+        setTrainingError(err.detail || "Failed to start training.");
+        setIsTraining(false);
+        setTrainingStatus("failed");
+      }
+    } catch (e: any) {
+      setTrainingError(e.message || "Failed to connect to training backend.");
+      setIsTraining(false);
+      setTrainingStatus("failed");
+    }
+  };
+
+  const stopRealTraining = async () => {
+    try {
+      let res = await fetch("/api/train/stop", { method: "POST" });
+      if (!res.ok) {
+        res = await fetch("http://127.0.0.1:8000/api/train/stop", { method: "POST" });
+      }
+      pollTrainingStatus();
+    } catch (e) {
+      console.error("Error stopping training:", e);
+    }
   };
 
   const downloadDataUri = (dataUri: string, filename: string) => {
@@ -409,6 +538,11 @@ export default function DeepPolypDashboard() {
 
     return matchesFilter && matchesSearch;
   });
+
+  const topDiceExp = experiments.length > 0 ? experiments.reduce((max, e) => (e.mean_dice > max.mean_dice ? e : max), experiments[0]) : null;
+  const topIoUExp = experiments.length > 0 ? experiments.reduce((max, e) => (e.mean_iou > max.mean_iou ? e : max), experiments[0]) : null;
+  const fastestExp = experiments.length > 0 ? experiments.filter((e): e is ExperimentRecord & { latency_ms: number } => typeof e.latency_ms === "number").reduce<ExperimentRecord | null>((min, e) => (!min || (typeof min.latency_ms === "number" && e.latency_ms < min.latency_ms) ? e : min), null) : null;
+  const lowestParamExp = experiments.length > 0 ? experiments.filter((e): e is ExperimentRecord & { parameters_m: number } => typeof e.parameters_m === "number").reduce<ExperimentRecord | null>((min, e) => (!min || (typeof min.parameters_m === "number" && e.parameters_m < min.parameters_m) ? e : min), null) : null;
 
   return (
     <div className="min-h-screen bg-[#070B14] text-slate-100 flex flex-col selection:bg-cyan-500 selection:text-black">
@@ -1100,6 +1234,46 @@ export default function DeepPolypDashboard() {
                           <span className="font-mono text-white font-bold">{res.polyp_area_percentage}%</span>
                         </div>
                         <div className="flex justify-between">
+                          <span className="text-slate-400">Inference Latency:</span>
+                          <span className="font-mono text-cyan-400 font-semibold">{res.inference_time_ms} ms</span>
+                        </div>
+
+                        {res.metrics ? (
+                          <div className="mt-2.5 pt-2.5 border-t border-slate-800/80 space-y-1.5 bg-slate-950/70 p-2.5 rounded-xl border border-slate-800/90">
+                            <div className="text-[11px] font-bold text-emerald-400 flex items-center justify-between">
+                              <span>Ground Truth Evaluation</span>
+                              <span className="text-[9px] font-mono bg-emerald-950 text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-800">Verified</span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-1.5 text-[11px] font-mono">
+                              <div className="flex justify-between p-1 bg-slate-900/60 rounded">
+                                <span className="text-slate-400">Dice:</span>
+                                <span className="text-cyan-400 font-bold">{(res.metrics.dice * 100).toFixed(1)}%</span>
+                              </div>
+                              <div className="flex justify-between p-1 bg-slate-900/60 rounded">
+                                <span className="text-slate-400">IoU:</span>
+                                <span className="text-emerald-400 font-bold">{(res.metrics.iou * 100).toFixed(1)}%</span>
+                              </div>
+                              <div className="flex justify-between p-1 bg-slate-900/60 rounded">
+                                <span className="text-slate-400">Precision:</span>
+                                <span className="text-white">{(res.metrics.precision * 100).toFixed(1)}%</span>
+                              </div>
+                              <div className="flex justify-between p-1 bg-slate-900/60 rounded">
+                                <span className="text-slate-400">Recall:</span>
+                                <span className="text-white">{(res.metrics.recall * 100).toFixed(1)}%</span>
+                              </div>
+                              <div className="flex justify-between p-1 bg-slate-900/60 rounded col-span-2">
+                                <span className="text-slate-400">Specificity:</span>
+                                <span className="text-slate-300">{(res.metrics.specificity * 100).toFixed(1)}%</span>
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="mt-1.5 p-2 rounded-lg bg-slate-950/40 border border-slate-800/60 text-[10px] text-slate-500 italic text-center">
+                            Quantitative metrics omitted (no ground-truth mask)
+                          </div>
+                        )}
+
+                        <div className="flex justify-between pt-1">
                           <span className="text-slate-400">Architecture Parameters:</span>
                           <span className="font-mono text-slate-300 font-semibold">{m.parameters_formatted}</span>
                         </div>
@@ -1144,26 +1318,42 @@ export default function DeepPolypDashboard() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="glass-panel p-4 rounded-2xl border border-slate-800 space-y-1">
                 <span className="text-xs text-slate-400 font-medium">Top Benchmark Dice (DSC)</span>
-                <div className="text-2xl font-extrabold text-cyan-400 font-mono">0.8924</div>
-                <div className="text-[11px] text-slate-400">SegFormer-B0 (MiT-B0)</div>
+                <div className="text-2xl font-extrabold text-cyan-400 font-mono">
+                  {topDiceExp ? topDiceExp.mean_dice.toFixed(4) : "—"}
+                </div>
+                <div className="text-[11px] text-slate-400">
+                  {topDiceExp ? `${topDiceExp.model_name} (${topDiceExp.encoder_backbone})` : "—"}
+                </div>
               </div>
 
               <div className="glass-panel p-4 rounded-2xl border border-slate-800 space-y-1">
                 <span className="text-xs text-slate-400 font-medium">Top Benchmark IoU (Jaccard)</span>
-                <div className="text-2xl font-extrabold text-emerald-400 font-mono">0.8185</div>
-                <div className="text-[11px] text-slate-400">Held-Out Test Set (100 Images)</div>
+                <div className="text-2xl font-extrabold text-emerald-400 font-mono">
+                  {topIoUExp ? topIoUExp.mean_iou.toFixed(4) : "—"}
+                </div>
+                <div className="text-[11px] text-slate-400">
+                  {topIoUExp ? `${topIoUExp.model_name} (${topIoUExp.encoder_backbone})` : "Held-Out Test Set"}
+                </div>
               </div>
 
               <div className="glass-panel p-4 rounded-2xl border border-slate-800 space-y-1">
-                <span className="text-xs text-slate-400 font-medium">Fastest CPU Turnaround</span>
-                <div className="text-2xl font-extrabold text-amber-400 font-mono">38.4 ms</div>
-                <div className="text-[11px] text-slate-400">LinkNet (Residual Bypass)</div>
+                <span className="text-xs text-slate-400 font-medium">Fastest Turnaround</span>
+                <div className="text-2xl font-extrabold text-amber-400 font-mono">
+                  {fastestExp?.latency_ms ? `${fastestExp.latency_ms} ms` : "—"}
+                </div>
+                <div className="text-[11px] text-slate-400">
+                  {fastestExp ? `${fastestExp.model_name} (${fastestExp.encoder_backbone})` : "—"}
+                </div>
               </div>
 
               <div className="glass-panel p-4 rounded-2xl border border-slate-800 space-y-1">
                 <span className="text-xs text-slate-400 font-medium">Parameter Footprint</span>
-                <div className="text-2xl font-extrabold text-purple-400 font-mono">3.45 M</div>
-                <div className="text-[11px] text-slate-400">Most Efficient Architecture</div>
+                <div className="text-2xl font-extrabold text-purple-400 font-mono">
+                  {lowestParamExp?.parameters_m ? `${lowestParamExp.parameters_m} M` : "—"}
+                </div>
+                <div className="text-[11px] text-slate-400">
+                  {lowestParamExp ? `${lowestParamExp.model_name} (Most Compact)` : "—"}
+                </div>
               </div>
             </div>
 
@@ -1356,16 +1546,34 @@ export default function DeepPolypDashboard() {
         {/* ========================================================================= */}
         {/* TAB 4: TRAINING & HYPERPARAMETER STUDIO                                   */}
         {/* ========================================================================= */}
+        {/* ========================================================================= */}
+        {/* TAB 4: TRAINING & HYPERPARAMETER STUDIO                                   */}
+        {/* ========================================================================= */}
         {activeTab === "training" && (
           <div className="space-y-6">
             <div className="glass-panel p-5 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 border border-slate-800">
               <div>
                 <h2 className="text-base font-bold text-white flex items-center gap-2">
-                  <Sliders className="w-5 h-5 text-cyan-400" /> Model Training & Convergence Studio
+                  <Sliders className="w-5 h-5 text-cyan-400" /> PyTorch Training & Convergence Studio
                 </h2>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Simulate model optimization with DiceBCELoss, inspect learning convergence curves, and review verified PyTorch checkpoints.
+                  Execute genuine PyTorch model optimization with DiceBCELoss, AdamW, and LR scheduling. Monitor live loss and validation metrics.
                 </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span
+                  className={`px-3 py-1 rounded-full text-xs font-mono font-bold uppercase border ${
+                    trainingStatus === "running"
+                      ? "bg-cyan-950 text-cyan-300 border-cyan-700 animate-pulse"
+                      : trainingStatus === "completed"
+                      ? "bg-emerald-950 text-emerald-300 border-emerald-700"
+                      : trainingStatus === "failed"
+                      ? "bg-rose-950 text-rose-300 border-rose-700"
+                      : "bg-slate-900 text-slate-400 border-slate-800"
+                  }`}
+                >
+                  Status: {trainingStatus}
+                </span>
               </div>
             </div>
 
@@ -1382,11 +1590,26 @@ export default function DeepPolypDashboard() {
                     <select
                       value={trainModel}
                       onChange={(e) => setTrainModel(e.target.value)}
-                      className="w-full mt-1.5 p-2.5 bg-slate-900 border border-slate-800 rounded-xl text-white font-medium focus:border-cyan-500"
+                      disabled={isTraining}
+                      className="w-full mt-1.5 p-2.5 bg-slate-900 border border-slate-800 rounded-xl text-white font-medium focus:border-cyan-500 disabled:opacity-50"
                     >
                       <option value="segformer">SegFormer-B0 (Transformer MiT-B0)</option>
                       <option value="unet">U-Net (ResNet34 Biomedical CNN)</option>
                       <option value="linknet">LinkNet (Residual Additive Bypass)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-slate-400 font-semibold">Dataset Source</label>
+                    <select
+                      value={trainDatasetSource}
+                      onChange={(e) => setTrainDatasetSource(e.target.value)}
+                      disabled={isTraining}
+                      className="w-full mt-1.5 p-2.5 bg-slate-900 border border-slate-800 rounded-xl text-white font-medium focus:border-cyan-500 disabled:opacity-50"
+                    >
+                      <option value="auto">Auto-Detect (Kvasir-SEG if found, else Samples)</option>
+                      <option value="sample_images">Sample Endoscopy Cases (3 cases, rapid demo)</option>
+                      <option value="kvasir_seg">Full Kvasir-SEG Dataset (data/kvasir_seg)</option>
                     </select>
                   </div>
 
@@ -1397,12 +1620,13 @@ export default function DeepPolypDashboard() {
                     </div>
                     <input
                       type="range"
-                      min={5}
-                      max={50}
-                      step={5}
+                      min={1}
+                      max={30}
+                      step={1}
                       value={trainEpochs}
                       onChange={(e) => setTrainEpochs(parseInt(e.target.value))}
-                      className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-cyan-500 mt-1.5"
+                      disabled={isTraining}
+                      className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-cyan-500 mt-1.5 disabled:opacity-50"
                     />
                   </div>
 
@@ -1411,11 +1635,12 @@ export default function DeepPolypDashboard() {
                     <select
                       value={trainBatchSize}
                       onChange={(e) => setTrainBatchSize(parseInt(e.target.value))}
-                      className="w-full mt-1.5 p-2.5 bg-slate-900 border border-slate-800 rounded-xl text-white font-medium focus:border-cyan-500"
+                      disabled={isTraining}
+                      className="w-full mt-1.5 p-2.5 bg-slate-900 border border-slate-800 rounded-xl text-white font-medium focus:border-cyan-500 disabled:opacity-50"
                     >
-                      <option value={4}>4 (Student Laptop / CPU Friendly)</option>
-                      <option value={8}>8 (Recommended Balanced)</option>
-                      <option value={16}>16 (GPU Recommended)</option>
+                      <option value={2}>2 (Minimal CPU Overhead)</option>
+                      <option value={4}>4 (Balanced)</option>
+                      <option value={8}>8 (Standard)</option>
                     </select>
                   </div>
 
@@ -1424,10 +1649,11 @@ export default function DeepPolypDashboard() {
                     <select
                       value={trainLr}
                       onChange={(e) => setTrainLr(parseFloat(e.target.value))}
-                      className="w-full mt-1.5 p-2.5 bg-slate-900 border border-slate-800 rounded-xl text-white font-medium focus:border-cyan-500"
+                      disabled={isTraining}
+                      className="w-full mt-1.5 p-2.5 bg-slate-900 border border-slate-800 rounded-xl text-white font-medium focus:border-cyan-500 disabled:opacity-50"
                     >
-                      <option value={0.0001}>1e-4 (Recommended for Transformers)</option>
-                      <option value={0.0005}>5e-4</option>
+                      <option value={0.0001}>1e-4 (Recommended for SegFormer)</option>
+                      <option value={0.0005}>5e-4 (Rapid Demo)</option>
                       <option value={0.001}>1e-3 (Standard CNN Rate)</option>
                     </select>
                   </div>
@@ -1440,21 +1666,38 @@ export default function DeepPolypDashboard() {
                   </div>
                 </div>
 
-                <button
-                  onClick={simulateTraining}
-                  disabled={isTrainingSim}
-                  className="w-full py-3 px-4 rounded-xl text-xs font-bold bg-cyan-600 hover:bg-cyan-500 text-white transition-all shadow-md shadow-cyan-600/30 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-                >
-                  {isTrainingSim ? (
-                    <>
-                      <RefreshCw className="w-4 h-4 animate-spin" /> Simulating Optimization ({simProgress}%)...
-                    </>
-                  ) : (
-                    <>
-                      <Play className="w-4 h-4 fill-white" /> Start Training Simulation
-                    </>
+                {trainingError && (
+                  <div className="p-3 bg-rose-950/80 border border-rose-800 text-rose-300 rounded-xl text-xs flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                    <span>{trainingError}</span>
+                  </div>
+                )}
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={startRealTraining}
+                    disabled={isTraining}
+                    className="flex-1 py-3 px-4 rounded-xl text-xs font-bold bg-cyan-600 hover:bg-cyan-500 text-white transition-all shadow-md shadow-cyan-600/30 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  >
+                    {isTraining ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" /> Training Epoch {trainHistory.length}/{trainEpochs} ({trainingProgress}%)...
+                      </>
+                    ) : (
+                      <>
+                        <Play className="w-4 h-4 fill-white" /> Start PyTorch Training
+                      </>
+                    )}
+                  </button>
+                  {isTraining && (
+                    <button
+                      onClick={stopRealTraining}
+                      className="py-3 px-4 rounded-xl text-xs font-bold bg-rose-600/80 hover:bg-rose-500 text-white transition-all cursor-pointer shadow-md shadow-rose-600/30"
+                    >
+                      Stop
+                    </button>
                   )}
-                </button>
+                </div>
               </div>
 
               {/* Real-time Loss / Metric Charts */}
@@ -1462,23 +1705,51 @@ export default function DeepPolypDashboard() {
                 <div>
                   <div className="flex items-center justify-between mb-2">
                     <div>
-                      <h3 className="text-sm font-bold text-white">Convergence & Metric Progression</h3>
-                      <p className="text-[11px] text-slate-400">Live loss reduction and validation Dice/IoU increase</p>
+                      <h3 className="text-sm font-bold text-white">Genuine PyTorch Convergence & Metric Progression</h3>
+                      <p className="text-[11px] text-slate-400">Real training loss reduction and validation Dice/IoU increase</p>
                     </div>
                     {trainHistory.length > 0 && (
                       <span className="text-xs text-cyan-400 font-mono bg-slate-900 border border-slate-800 px-2 py-0.5 rounded">
-                        Epoch {trainHistory.length} / {trainEpochs} ({simProgress}%)
+                        Epoch {trainHistory.length} / {trainEpochs} ({trainingProgress}%)
                       </span>
                     )}
                   </div>
 
                   {/* Progress Bar when running */}
-                  {isTrainingSim && (
+                  {(isTraining || trainingProgress > 0) && (
                     <div className="w-full bg-slate-950 h-2 rounded-full overflow-hidden border border-slate-800 mb-3">
                       <div
                         className="h-full bg-gradient-to-r from-cyan-500 to-emerald-400 transition-all duration-300"
-                        style={{ width: `${simProgress}%` }}
+                        style={{ width: `${trainingProgress}%` }}
                       ></div>
+                    </div>
+                  )}
+
+                  {/* Live Training Telemetry KPIs */}
+                  {trainingStatus !== "idle" && (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3 text-xs">
+                      <div className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800">
+                        <span className="text-slate-400 text-[10px] block">Train Loss</span>
+                        <span className="font-mono font-bold text-rose-400 text-sm">
+                          {currentTrainLoss !== null ? currentTrainLoss.toFixed(4) : "—"}
+                        </span>
+                      </div>
+                      <div className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800">
+                        <span className="text-slate-400 text-[10px] block">Validation Dice</span>
+                        <span className="font-mono font-bold text-cyan-400 text-sm">
+                          {currentValDice !== null ? `${(currentValDice * 100).toFixed(1)}%` : "—"}
+                        </span>
+                      </div>
+                      <div className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800">
+                        <span className="text-slate-400 text-[10px] block">Validation IoU</span>
+                        <span className="font-mono font-bold text-emerald-400 text-sm">
+                          {currentValIoU !== null ? `${(currentValIoU * 100).toFixed(1)}%` : "—"}
+                        </span>
+                      </div>
+                      <div className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800">
+                        <span className="text-slate-400 text-[10px] block">Elapsed Time</span>
+                        <span className="font-mono font-bold text-amber-400 text-sm">{elapsedTimeSec}s</span>
+                      </div>
                     </div>
                   )}
 
@@ -1491,15 +1762,15 @@ export default function DeepPolypDashboard() {
                           <YAxis stroke="#64748B" tick={{ fontSize: 10 }} />
                           <Tooltip contentStyle={{ backgroundColor: "#0F172A", borderColor: "#334155", fontSize: 11, borderRadius: 8 }} />
                           <Legend wrapperStyle={{ fontSize: 11, paddingTop: 10 }} />
-                          <Line type="monotone" dataKey="train_loss" stroke="#F43F5E" name="Train Loss (BCE + Dice)" strokeWidth={2} dot={false} />
-                          <Line type="monotone" dataKey="val_dice" stroke="#06B6D4" name="Val Dice (DSC)" strokeWidth={2} dot={false} />
-                          <Line type="monotone" dataKey="val_iou" stroke="#10B981" name="Val IoU (Jaccard)" strokeWidth={2} dot={false} />
+                          <Line type="monotone" dataKey="train_loss" stroke="#F43F5E" name="Train Loss (BCE + Dice)" strokeWidth={2} dot={true} />
+                          <Line type="monotone" dataKey="val_dice" stroke="#06B6D4" name="Val Dice (DSC)" strokeWidth={2} dot={true} />
+                          <Line type="monotone" dataKey="val_iou" stroke="#10B981" name="Val IoU (Jaccard)" strokeWidth={2} dot={true} />
                         </LineChart>
                       </ResponsiveContainer>
                     ) : (
                       <div className="h-full flex flex-col items-center justify-center text-xs text-slate-500 border border-dashed border-slate-800 rounded-xl">
                         <Activity className="w-8 h-8 text-slate-700 mb-2" />
-                        <span>Click &quot;Start Training Simulation&quot; to inspect real-time convergence</span>
+                        <span>Click &quot;Start PyTorch Training&quot; to execute real optimization and monitor live convergence</span>
                       </div>
                     )}
                   </div>

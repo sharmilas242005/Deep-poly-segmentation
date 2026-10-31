@@ -1,0 +1,40 @@
+{
+  "config": {
+    "model_name": "segformer",
+    "dataset_dir": "data/sample_images",
+    "output_dir": "experiments/runs",
+    "image_size": 256,
+    "batch_size": 2,
+    "epochs": 1,
+    "learning_rate": 0.0005,
+    "weight_decay": 0.0001,
+    "random_seed": 42,
+    "device": "cpu",
+    "early_stopping_patience": 2
+  },
+  "history": {
+    "epoch": [
+      1
+    ],
+    "train_loss": [
+      0.8451
+    ],
+    "val_loss": [
+      0.741
+    ],
+    "val_dice": [
+      0.2785
+    ],
+    "val_iou": [
+      0.1618
+    ],
+    "learning_rate": [
+      0.0005
+    ]
+  },
+  "best_dice": 0.27847353995463003,
+  "best_iou": 0.16175966296124733,
+  "best_checkpoint": "experiments/runs\\segformer_1793419457\\best_checkpoint.pt",
+  "dataset_used": "data/sample_images",
+  "dataset_pairs": 3
+}

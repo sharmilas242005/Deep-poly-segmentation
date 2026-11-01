@@ -56,6 +56,15 @@ class ModelInfo(BaseModel):
     size_mb: float
     is_modern: bool
     historical_reference: Optional[str] = None
+    checkpoint_available: bool = False
+    checkpoint_filename: Optional[str] = None
+    checkpoint_path: Optional[str] = None
+    is_trained: bool = False
+    training_type: str = "missing"
+    training_dataset: Optional[str] = None
+    dataset_details: Optional[str] = None
+    status_message: str = "Trained checkpoint not found."
+    checkpoint_size_mb: float = 0.0
 
 
 class HealthResponse(BaseModel):
@@ -70,8 +79,13 @@ class HealthResponse(BaseModel):
 
 class DatasetStatusResponse(BaseModel):
     is_valid: bool
+    dataset_available: bool = True
+    dataset_name: str = "Kvasir-SEG"
     dataset_directory: str
     paired_count: int
+    train_count: int = 0
+    val_count: int = 0
+    test_count: int = 0
     unpaired_images_count: int
     unpaired_masks_count: int
     corrupted_files_count: int

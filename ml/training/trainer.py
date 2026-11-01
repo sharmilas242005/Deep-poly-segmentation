@@ -17,6 +17,7 @@ from torch.utils.data import DataLoader
 from ml.models.registry import create_model
 from ml.datasets.kvasir_dataset import (
     validate_kvasir_dataset,
+    resolve_dataset_path,
     get_deterministic_splits,
     PolypSegmentationDataset
 )
@@ -28,7 +29,7 @@ class TrainingConfig:
     def __init__(
         self,
         model_name: str = "segformer",
-        dataset_dir: str = "data/kvasir_seg",
+        dataset_dir: Optional[str] = None,
         output_dir: str = "experiments/runs",
         image_size: int = 256,
         batch_size: int = 8,
@@ -40,7 +41,11 @@ class TrainingConfig:
         early_stopping_patience: int = 8
     ):
         self.model_name = model_name
-        self.dataset_dir = dataset_dir
+        if not dataset_dir or dataset_dir == "auto":
+            resolved, _ = resolve_dataset_path()
+            self.dataset_dir = resolved
+        else:
+            self.dataset_dir = dataset_dir
         self.output_dir = output_dir
         self.image_size = image_size
         self.batch_size = batch_size
@@ -171,15 +176,14 @@ class PolypTrainer:
         """
         Executes full training pipeline or limited smoke test.
         """
-        # Validate dataset (fallback to sample_images if kvasir_seg is not present)
+        # Validate dataset using priority resolution
         dataset_dir = self.config.dataset_dir
         report = validate_kvasir_dataset(dataset_dir)
         if not report.is_valid:
-            fallback_dir = "data/sample_images"
-            fallback_report = validate_kvasir_dataset(fallback_dir)
-            if fallback_report.is_valid:
-                dataset_dir = fallback_dir
-                report = fallback_report
+            resolved_dir, resolved_report = resolve_dataset_path(dataset_dir)
+            if resolved_report.is_valid:
+                dataset_dir = resolved_dir
+                report = resolved_report
             else:
                 return {
                     "success": False,

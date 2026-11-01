@@ -1,0 +1,52 @@
+{
+  "config": {
+    "model_name": "segformer",
+    "dataset_dir": "C:\\Users\\sharm\\Downloads\\sharmila\\7th sem\\deep learning\\DL project\\Deep poly segmentation\\ml\\datasets\\Kvasir-SEG",
+    "output_dir": "experiments/runs",
+    "image_size": 256,
+    "batch_size": 4,
+    "epochs": 10,
+    "learning_rate": 0.0005,
+    "weight_decay": 0.0001,
+    "random_seed": 42,
+    "device": "cpu",
+    "early_stopping_patience": 5
+  },
+  "history": {
+    "epoch": [
+      1,
+      2,
+      3
+    ],
+    "train_loss": [
+      0.5483,
+      0.4992,
+      0.4775
+    ],
+    "val_loss": [
+      0.52,
+      0.4826,
+      0.5748
+    ],
+    "val_dice": [
+      0.4125,
+      0.4271,
+      0.1809
+    ],
+    "val_iou": [
+      0.2884,
+      0.3059,
+      0.1237
+    ],
+    "learning_rate": [
+      0.0005,
+      0.0005,
+      0.0005
+    ]
+  },
+  "best_dice": 0.42706545402941987,
+  "best_iou": 0.30591171953594287,
+  "best_checkpoint": "experiments/runs\\segformer_1793522076\\best_checkpoint.pt",
+  "dataset_used": "C:\\Users\\sharm\\Downloads\\sharmila\\7th sem\\deep learning\\DL project\\Deep poly segmentation\\ml\\datasets\\Kvasir-SEG",
+  "dataset_pairs": 1000
+}

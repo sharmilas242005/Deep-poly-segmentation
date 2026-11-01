@@ -9,6 +9,7 @@ import threading
 from typing import Dict, Any, Optional, List
 
 from ml.training.trainer import TrainingConfig, PolypTrainer
+from ml.datasets.kvasir_dataset import resolve_dataset_path
 
 
 class TrainingManager:
@@ -85,10 +86,13 @@ class TrainingManager:
             self.dataset_used = None
             self.dataset_pairs = 0
 
-        # Resolve dataset directory
-        dataset_dir = "data/kvasir_seg"
-        if dataset_source == "sample_images" or (dataset_source == "auto" and not os.path.isdir("data/kvasir_seg/images")):
-            dataset_dir = "data/sample_images"
+        # Resolve dataset directory using strict priority
+        if dataset_source == "sample_images":
+            dataset_dir, report = resolve_dataset_path(preferred_path="data/sample_images")
+        elif dataset_source in ("auto", "kvasir_seg", None, ""):
+            dataset_dir, report = resolve_dataset_path()
+        else:
+            dataset_dir, report = resolve_dataset_path(preferred_path=dataset_source)
 
         config = TrainingConfig(
             model_name=model_name,

@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 
 from ml.models.registry import get_available_models_metadata, MODEL_CATALOG
 from ml.inference.predictor import PolypPredictor
-from ml.datasets.kvasir_dataset import validate_kvasir_dataset
+from ml.datasets.kvasir_dataset import validate_kvasir_dataset, resolve_dataset_path, get_deterministic_splits
 from ml.evaluation.metrics import calculate_segmentation_metrics
 from backend.app.schemas.segmentation import (
     ModelInfo,
@@ -45,7 +45,7 @@ ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
 @router.get("/health", response_model=HealthResponse)
 def get_health():
     import torch
-    report = validate_kvasir_dataset(DATASET_PATH)
+    resolved_path, report = resolve_dataset_path()
     return {
         "status": "healthy",
         "timestamp": time.time(),
@@ -95,7 +95,9 @@ async def predict_image(
             threshold=threshold
         )
         return result
-    except ValueError as ve:
+    except FileNotFoundError as fnfe:
+        raise HTTPException(status_code=400, detail=str(fnfe))
+    except (ValueError, RuntimeError) as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         raise HTTPException(status_code=500, detail="Inference processing failed. Please try with another image.")
@@ -121,6 +123,10 @@ async def compare_segmentation_models(
             threshold=float(threshold)
         )
         return comparison
+    except FileNotFoundError as fnfe:
+        raise HTTPException(status_code=400, detail=str(fnfe))
+    except (ValueError, RuntimeError) as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         raise HTTPException(status_code=500, detail="Multi-model comparison failed.")
 
@@ -145,7 +151,7 @@ def get_experiments():
     link_agg = eval_data.get("linknet", {}).get("aggregate", {})
 
     experiments = [
-        # Modern Evaluated Models (Empirically measured from checkpoints)
+        # Modern Evaluated Models (Empirically measured from sample-trained checkpoints)
         {
             "model_name": "SegFormer-B0",
             "encoder_backbone": "MiT-B0 (Hierarchical Transformer)",
@@ -158,8 +164,8 @@ def get_experiments():
             "mean_fm": seg_agg.get("mean_f1_score", 0.8288),
             "latency_ms": seg_agg.get("mean_latency_ms", 75.8),
             "parameters_m": 3.72,
-            "source": "Modern PyTorch (Current Upgrade)",
-            "status": "Evaluated"
+            "source": "Modern PyTorch (Sample-Trained on 3 Demo Images: data/sample_images)",
+            "status": "Evaluated on Demo Cases"
         },
         {
             "model_name": "U-Net",
@@ -173,8 +179,8 @@ def get_experiments():
             "mean_fm": unet_agg.get("mean_f1_score", 0.9826),
             "latency_ms": unet_agg.get("mean_latency_ms", 209.6),
             "parameters_m": 24.43,
-            "source": "Modern PyTorch (Current Upgrade)",
-            "status": "Evaluated"
+            "source": "Modern PyTorch (Sample-Trained on 3 Demo Images: data/sample_images)",
+            "status": "Evaluated on Demo Cases"
         },
         {
             "model_name": "LinkNet",
@@ -188,8 +194,8 @@ def get_experiments():
             "mean_fm": link_agg.get("mean_f1_score", 0.9827),
             "latency_ms": link_agg.get("mean_latency_ms", 143.3),
             "parameters_m": 21.16,
-            "source": "Modern PyTorch (Current Upgrade)",
-            "status": "Evaluated"
+            "source": "Modern PyTorch (Sample-Trained on 3 Demo Images: data/sample_images)",
+            "status": "Evaluated on Demo Cases"
         },
 
         # Historical Project Report Baselines (U-Net Table 5.4.1)
@@ -306,19 +312,22 @@ def get_experiments():
 
 @router.get("/dataset/status", response_model=DatasetStatusResponse)
 def get_dataset_status():
-    report = validate_kvasir_dataset(DATASET_PATH)
+    resolved_path, report = resolve_dataset_path()
+    train_pairs, val_pairs, test_pairs = get_deterministic_splits(report.valid_pairs)
     instructions = (
-        "To configure the Kvasir-SEG dataset:\n"
-        "1. Download the official Kvasir-SEG dataset archive from: https://datasets.simula.no/kvasir-seg/\n"
-        "2. Extract into 'data/kvasir_seg/' directory with subfolders:\n"
-        "   data/kvasir_seg/images/*.jpg (1,000 endoscopy frames)\n"
-        "   data/kvasir_seg/masks/*.jpg  (1,000 ground truth binary masks)\n"
-        "3. Re-run dataset validation from the dashboard."
+        f"Kvasir-SEG dataset active at: {os.path.abspath(resolved_path)}\n"
+        f"Total pairs: {len(report.valid_pairs)} (Train: {len(train_pairs)}, Val: {len(val_pairs)}, Test: {len(test_pairs)})\n"
+        "Nearest-neighbor mask interpolation and strict binary thresholding active."
     )
     return {
         "is_valid": report.is_valid,
-        "dataset_directory": os.path.abspath(DATASET_PATH),
+        "dataset_available": report.is_valid,
+        "dataset_name": os.path.basename(os.path.normpath(resolved_path)),
+        "dataset_directory": os.path.abspath(resolved_path),
         "paired_count": len(report.valid_pairs),
+        "train_count": len(train_pairs),
+        "val_count": len(val_pairs),
+        "test_count": len(test_pairs),
         "unpaired_images_count": len(report.unpaired_images),
         "unpaired_masks_count": len(report.unpaired_masks),
         "corrupted_files_count": len(report.corrupted_files),
@@ -453,6 +462,10 @@ async def evaluate_image_with_ground_truth(
             model_name=model_name,
             threshold=threshold
         )
+    except FileNotFoundError as fnfe:
+        raise HTTPException(status_code=400, detail=str(fnfe))
+    except (ValueError, RuntimeError) as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Inference failed: {str(e)}")
 

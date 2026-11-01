@@ -31,6 +31,8 @@ def test_health_endpoint():
     assert "registered_models" in data
     assert "segformer" in data["registered_models"]
     assert "device" in data
+    assert data["dataset_present"] is True
+    assert data["valid_image_mask_pairs"] == 1000
 
 
 def test_models_endpoint():
@@ -59,7 +61,13 @@ def test_dataset_status_endpoint():
     response = client.get("/api/dataset/status")
     assert response.status_code == 200
     data = response.json()
-    assert "is_valid" in data
+    assert data["is_valid"] is True
+    assert data["dataset_available"] is True
+    assert data["paired_count"] == 1000
+    assert data["train_count"] == 700
+    assert data["val_count"] == 200
+    assert data["test_count"] == 100
+    assert "Kvasir-SEG" in data["dataset_directory"]
     assert "instructions" in data
 
 

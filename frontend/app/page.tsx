@@ -56,6 +56,15 @@ interface ModelMetadata {
   size_mb: number;
   is_modern: boolean;
   historical_reference: string | null;
+  checkpoint_available?: boolean;
+  checkpoint_filename?: string | null;
+  checkpoint_path?: string | null;
+  is_trained?: boolean;
+  training_type?: string;
+  training_dataset?: string | null;
+  dataset_details?: string | null;
+  status_message?: string;
+  checkpoint_size_mb?: number;
 }
 
 interface SampleImage {
@@ -100,6 +109,18 @@ interface ExperimentRecord {
   status: string;
 }
 
+interface DatasetStatusInfo {
+  is_valid: boolean;
+  dataset_available: boolean;
+  dataset_name: string;
+  dataset_directory: string;
+  paired_count: number;
+  train_count: number;
+  val_count: number;
+  test_count: number;
+  instructions: string;
+}
+
 const BACKEND_BASE_URL = "http://127.0.0.1:8000";
 
 async function apiFetch(endpoint: string, options?: RequestInit): Promise<Response> {
@@ -128,6 +149,7 @@ export default function DeepPolypDashboard() {
   const [samples, setSamples] = useState<SampleImage[]>([]);
   const [experiments, setExperiments] = useState<ExperimentRecord[]>([]);
   const [systemHealth, setSystemHealth] = useState<any>(null);
+  const [datasetInfo, setDatasetInfo] = useState<DatasetStatusInfo | null>(null);
   const [isBackendAvailable, setIsBackendAvailable] = useState<boolean | null>(null);
 
   // Segmentation Studio state
@@ -139,12 +161,14 @@ export default function DeepPolypDashboard() {
   const [activeSampleMaskDataUri, setActiveSampleMaskDataUri] = useState<string>("");
   const [prediction, setPrediction] = useState<PredictionResult | null>(null);
   const [isInferring, setIsInferring] = useState<boolean>(false);
+  const [inferenceError, setInferenceError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"tri" | "overlay" | "mask" | "original">("tri");
   const [splitSliderPos, setSplitSliderPos] = useState<number>(50);
 
   // Multi-model comparison state
   const [comparisonResults, setComparisonResults] = useState<Record<string, PredictionResult>>({});
   const [isComparing, setIsComparing] = useState<boolean>(false);
+  const [comparisonError, setComparisonError] = useState<string | null>(null);
 
   // Benchmarks filter state
   const [benchmarkFilter, setBenchmarkFilter] = useState<"all" | "modern" | "historical">("all");
@@ -191,12 +215,25 @@ export default function DeepPolypDashboard() {
     fetchModels();
     fetchSamples();
     fetchExperiments();
+    fetchDatasetStatus();
     pollTrainingStatus();
 
     return () => {
       stopPolling();
     };
   }, []);
+
+  const fetchDatasetStatus = async () => {
+    try {
+      const res = await apiFetch("/api/dataset/status");
+      if (res.ok) {
+        const data = await res.json();
+        setDatasetInfo(data);
+      }
+    } catch (e) {
+      console.warn("Could not load dataset status", e);
+    }
+  };
 
   const fetchHealth = async () => {
     try {
@@ -287,6 +324,7 @@ export default function DeepPolypDashboard() {
   const triggerPredictionWithDataUri = async (dataUri: string, model: string, thresh: number) => {
     if (!dataUri) return;
     setIsInferring(true);
+    setInferenceError(null);
     try {
       const blob = await (await fetch(dataUri)).blob();
       const formData = new FormData();
@@ -302,10 +340,17 @@ export default function DeepPolypDashboard() {
       if (res.ok) {
         const data = await res.json();
         setPrediction(data);
+        setInferenceError(null);
         setIsBackendAvailable(true);
+      } else {
+        const err = await res.json().catch(() => ({ detail: "Inference failed" }));
+        setInferenceError(err.detail || "Inference failed. Checkpoint may be missing or invalid.");
+        setPrediction(null);
       }
     } catch (e: any) {
       console.warn("Inference call error:", e.message || e);
+      setInferenceError(e.message || "Failed to communicate with backend inference service");
+      setPrediction(null);
     } finally {
       setIsInferring(false);
     }
@@ -319,6 +364,7 @@ export default function DeepPolypDashboard() {
   const runMultiModelComparison = async () => {
     if (!selectedImageDataUri && !selectedImageFile) return;
     setIsComparing(true);
+    setComparisonError(null);
 
     try {
       const imgBlob = await (await fetch(selectedImageDataUri)).blob();
@@ -358,6 +404,9 @@ export default function DeepPolypDashboard() {
               metrics: evalData.metrics,
               has_ground_truth: evalData.has_ground_truth,
             };
+          } else {
+            const err = await evalRes.json().catch(() => ({ detail: "Evaluation failed" }));
+            setComparisonError(err.detail || `Model '${mName}' evaluation failed.`);
           }
         } else {
           const predRes = await apiFetch("/api/predict", { method: "POST", body: formData });
@@ -368,6 +417,9 @@ export default function DeepPolypDashboard() {
               metrics: null,
               has_ground_truth: false,
             };
+          } else {
+            const err = await predRes.json().catch(() => ({ detail: "Inference failed" }));
+            setComparisonError(err.detail || `Model '${mName}' inference failed.`);
           }
         }
       }
@@ -376,6 +428,7 @@ export default function DeepPolypDashboard() {
       setIsBackendAvailable(true);
     } catch (e: any) {
       console.warn("Comparison error:", e.message || e);
+      setComparisonError(e.message || "Failed to complete multi-model comparison");
     } finally {
       setIsComparing(false);
     }
@@ -419,6 +472,7 @@ export default function DeepPolypDashboard() {
         if (data.status === "completed") {
           fetchHealth();
           fetchModels();
+          fetchDatasetStatus();
         }
       }
     } catch (e: any) {
@@ -678,6 +732,7 @@ export default function DeepPolypDashboard() {
                   fetchModels();
                   fetchSamples();
                   fetchExperiments();
+                  fetchDatasetStatus();
                   pollTrainingStatus();
                 }}
                 title="FastAPI server is unreachable at http://127.0.0.1:8000. Click to retry connection."
@@ -773,6 +828,7 @@ export default function DeepPolypDashboard() {
                 fetchModels();
                 fetchSamples();
                 fetchExperiments();
+                fetchDatasetStatus();
                 pollTrainingStatus();
               }}
               className="px-4 py-2 bg-rose-900 hover:bg-rose-800 border border-rose-700 text-white rounded-xl font-semibold text-xs shrink-0 cursor-pointer transition-all flex items-center justify-center gap-1.5 shadow-md"
@@ -870,26 +926,44 @@ export default function DeepPolypDashboard() {
                                 : "bg-slate-900/50 border-slate-800/80 text-slate-400 hover:border-slate-700 hover:bg-slate-800/40"
                             }`}
                           >
-                            <div className="flex items-center justify-between mb-1">
+                            <div className="flex items-center justify-between mb-1.5 flex-wrap gap-1">
                               <span className={`font-bold text-xs ${isSelected ? "text-cyan-300" : "text-white"}`}>
                                 {m.name}
                               </span>
-                              {m.is_modern ? (
-                                <span className="text-[10px] font-semibold bg-emerald-950 text-emerald-300 border border-emerald-800 px-1.5 py-0.5 rounded">
-                                  Transformer SOTA
-                                </span>
-                              ) : (
-                                <span className="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded font-mono">
-                                  Baseline CNN
-                                </span>
-                              )}
+                              <div className="flex items-center gap-1">
+                                {m.checkpoint_available && m.is_trained ? (
+                                  <span
+                                    className="text-[10px] font-semibold bg-cyan-950/90 text-cyan-300 border border-cyan-700/80 px-1.5 py-0.5 rounded flex items-center gap-1"
+                                    title="Trained on 3 sample images (data/sample_images). Not trained on full 1,000 Kvasir-SEG images."
+                                  >
+                                    <Shield className="w-2.5 h-2.5 text-cyan-400" />
+                                    Sample-Trained
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] font-semibold bg-rose-950/90 text-rose-300 border border-rose-800 px-1.5 py-0.5 rounded flex items-center gap-1">
+                                    <AlertTriangle className="w-2.5 h-2.5 text-rose-400" />
+                                    Weights Missing
+                                  </span>
+                                )}
+                                {m.is_modern ? (
+                                  <span className="text-[10px] font-semibold bg-emerald-950 text-emerald-300 border border-emerald-800 px-1.5 py-0.5 rounded">
+                                    Transformer
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded font-mono">
+                                    CNN
+                                  </span>
+                                )}
+                              </div>
                             </div>
                             <p className="text-[11px] text-slate-400 line-clamp-2 leading-relaxed">
                               {m.description}
                             </p>
                             <div className="flex items-center justify-between text-[10px] text-slate-500 mt-2 font-mono pt-1.5 border-t border-slate-800/60">
                               <span>Params: <strong className="text-slate-300">{m.parameters_formatted}</strong></span>
-                              <span>{m.input_resolution}</span>
+                              <span className="truncate max-w-[140px]" title={m.checkpoint_path || ""}>
+                                {m.checkpoint_filename ? `ckpt: ${m.checkpoint_filename}` : "no ckpt"}
+                              </span>
                             </div>
                           </div>
                         );
@@ -960,10 +1034,33 @@ export default function DeepPolypDashboard() {
                     </div>
                   </div>
 
+                  {/* Missing Checkpoint Warning */}
+                  {models.find((m) => m.id === selectedModel)?.checkpoint_available === false && (
+                    <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-700/60 text-amber-300 text-xs flex items-start gap-2">
+                      <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                      <span>Trained checkpoint not found. Please provide trained model weights before running inference.</span>
+                    </div>
+                  )}
+
+                  {/* Inference Error Notification */}
+                  {inferenceError && (
+                    <div className="p-3 rounded-xl bg-rose-950/50 border border-rose-700/70 text-rose-200 text-xs flex items-start gap-2">
+                      <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                      <div>
+                        <span className="font-bold">Inference Error: </span>
+                        <span>{inferenceError}</span>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Primary Predict CTA Button */}
                   <button
                     onClick={runPrediction}
-                    disabled={isInferring || !selectedImageDataUri}
+                    disabled={
+                      isInferring ||
+                      !selectedImageDataUri ||
+                      models.find((m) => m.id === selectedModel)?.checkpoint_available === false
+                    }
                     className="w-full py-3 px-4 rounded-xl font-bold text-xs text-black bg-gradient-to-r from-cyan-400 via-teal-300 to-emerald-400 hover:from-cyan-300 hover:to-emerald-300 transition-all shadow-lg shadow-cyan-500/25 disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99]"
                   >
                     {isInferring ? (
@@ -1248,6 +1345,17 @@ export default function DeepPolypDashboard() {
               </button>
             </div>
 
+            {/* Comparison Error Banner */}
+            {comparisonError && (
+              <div className="p-3 rounded-xl bg-rose-950/50 border border-rose-700/70 text-rose-200 text-xs flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold">Comparison Notice: </span>
+                  <span>{comparisonError}</span>
+                </div>
+              </div>
+            )}
+
             {/* Model Comparison Grid */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {models.map((m) => {
@@ -1258,7 +1366,23 @@ export default function DeepPolypDashboard() {
                       <div className="flex items-center justify-between mb-2">
                         <div>
                           <h3 className="font-bold text-sm text-white">{m.name}</h3>
-                          <span className="text-[11px] text-slate-400">{m.family}</span>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            <span className="text-[11px] text-slate-400">{m.family}</span>
+                            {m.checkpoint_available && m.is_trained ? (
+                              <span
+                                className="text-[9px] font-semibold bg-cyan-950/80 text-cyan-300 border border-cyan-800/80 px-1.5 py-0.5 rounded flex items-center gap-1"
+                                title="Trained on 3 sample images (data/sample_images). Not trained on full 1,000 Kvasir-SEG dataset."
+                              >
+                                <Shield className="w-2.5 h-2.5 text-cyan-400" />
+                                Sample-Trained
+                              </span>
+                            ) : (
+                              <span className="text-[9px] font-semibold bg-rose-950 text-rose-300 border border-rose-800 px-1.5 py-0.5 rounded flex items-center gap-1">
+                                <AlertTriangle className="w-2.5 h-2.5 text-rose-400" />
+                                Missing Weights
+                              </span>
+                            )}
+                          </div>
                         </div>
                         {m.is_modern ? (
                           <span className="text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800 px-2 py-0.5 rounded-full">
@@ -1375,7 +1499,7 @@ export default function DeepPolypDashboard() {
                   <BarChart3 className="w-5 h-5 text-cyan-400" /> Research Benchmarks & Empirical Evaluation
                 </h2>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Rigorous empirical comparison between the original 2023–2024 academic project report benchmarks and our newly modernized PyTorch models on the Kvasir-SEG test split.
+                  Rigorous empirical comparison between the original 2023–2024 academic project report benchmarks and our modern PyTorch models (currently evaluated on sample-trained demo checkpoints; full Kvasir-SEG training available in the Training Studio).
                 </p>
               </div>
 
@@ -1673,17 +1797,35 @@ export default function DeepPolypDashboard() {
                   </div>
 
                   <div>
-                    <label className="text-slate-400 font-semibold">Dataset Source</label>
+                    <div className="flex justify-between items-center">
+                      <label className="text-slate-400 font-semibold">Dataset Source</label>
+                      {datasetInfo && datasetInfo.paired_count > 0 && (
+                        <span className="text-[10px] font-mono text-cyan-400">
+                          {datasetInfo.paired_count} pairs ({datasetInfo.train_count} train / {datasetInfo.val_count} val / {datasetInfo.test_count} test)
+                        </span>
+                      )}
+                    </div>
                     <select
                       value={trainDatasetSource}
                       onChange={(e) => setTrainDatasetSource(e.target.value)}
                       disabled={isTraining}
                       className="w-full mt-1.5 p-2.5 bg-slate-900 border border-slate-800 rounded-xl text-white font-medium focus:border-cyan-500 disabled:opacity-50"
                     >
-                      <option value="auto">Auto-Detect (Kvasir-SEG if found, else Samples)</option>
-                      <option value="sample_images">Sample Endoscopy Cases (3 cases, rapid demo)</option>
-                      <option value="kvasir_seg">Full Kvasir-SEG Dataset (data/kvasir_seg)</option>
+                      <option value="auto">
+                        Auto-Detect ({datasetInfo?.dataset_name || "Kvasir-SEG"}: {datasetInfo?.paired_count ?? 1000} pairs)
+                      </option>
+                      <option value="kvasir_seg">
+                        Full Kvasir-SEG Dataset ({datasetInfo?.paired_count ?? 1000} pairs)
+                      </option>
+                      <option value="sample_images">
+                        Sample Endoscopy Cases (3 pairs, rapid CPU demo)
+                      </option>
                     </select>
+                    {datasetInfo && (
+                      <p className="text-[10px] text-slate-500 mt-1 truncate" title={datasetInfo.dataset_directory}>
+                        Active: <span className="font-mono text-slate-400">{datasetInfo.dataset_directory}</span>
+                      </p>
+                    )}
                   </div>
 
                   <div>

@@ -1,6 +1,7 @@
 """
 Inference Engine and Visualizer for Deep Polyp Segmentation.
 Generates binary masks, alpha-blended lesion overlays, contour boundaries, and latency metrics.
+Strictly requires genuine trained model weights for all inference operations.
 """
 
 import os
@@ -9,7 +10,7 @@ import io
 import base64
 from typing import Dict, Any, Optional, List, Tuple, Union
 import numpy as np
-from PIL import Image, ImageOps
+from PIL import Image
 import torch
 import torchvision.transforms.functional as TF
 import cv2
@@ -19,7 +20,7 @@ from ml.models.registry import create_model, MODEL_CATALOG
 
 class PolypPredictor:
     """
-    High-performance, cached model inference service.
+    High-performance, cached model inference service with strict trained-checkpoint enforcement.
     """
     def __init__(self, device: str = "cpu"):
         self.device = device
@@ -27,12 +28,31 @@ class PolypPredictor:
 
     def get_model(self, model_name: str, checkpoint_path: Optional[str] = None) -> torch.nn.Module:
         key = model_name.lower().strip()
+        if key not in MODEL_CATALOG:
+            raise ValueError(f"Unknown model '{model_name}'. Available architectures: {list(MODEL_CATALOG.keys())}")
+
         if key not in self._loaded_models:
             if checkpoint_path is None:
                 default_ckpt = os.path.join("ml", "checkpoints", f"{key}_best.pt")
                 if os.path.isfile(default_ckpt):
                     checkpoint_path = default_ckpt
-            model = create_model(key, device=self.device, checkpoint_path=checkpoint_path, eval_mode=True)
+                else:
+                    raise FileNotFoundError(
+                        f"Trained checkpoint not found for '{key}'. "
+                        "Please provide trained model weights before running inference."
+                    )
+            model = create_model(
+                key,
+                device=self.device,
+                checkpoint_path=checkpoint_path,
+                eval_mode=True,
+                require_checkpoint=True
+            )
+            if not getattr(model, "_is_trained", False):
+                raise RuntimeError(
+                    f"Model '{key}' was instantiated without trained weights. "
+                    "Inference with random uninitialized weights is strictly prohibited."
+                )
             self._loaded_models[key] = model
         return self._loaded_models[key]
 
@@ -58,6 +78,7 @@ class PolypPredictor:
     ) -> Dict[str, Any]:
         """
         Executes segmentation inference, produces binary mask, overlay, and clinical summary.
+        Strictly requires trained model weights.
         """
         # 1. Parse input into PIL Image
         if isinstance(image_input, str):
@@ -153,9 +174,14 @@ class PolypPredictor:
     ) -> Dict[str, Any]:
         """
         Executes multi-model side-by-side segmentation on the exact same frame.
+        Verifies trained weights exist for all models before execution.
         """
         if model_names is None:
             model_names = ["segformer", "unet", "linknet"]
+
+        # Validate trained checkpoints for all architectures before inference
+        for name in model_names:
+            self.get_model(name)
 
         results = {}
         for name in model_names:

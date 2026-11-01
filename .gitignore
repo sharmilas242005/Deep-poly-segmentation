@@ -24,7 +24,8 @@ ml/checkpoints/
 
 # Datasets
 data/
-datasets/
+/datasets/
+ml/datasets/Kvasir-SEG/
 Kvasir-SEG/
 1ST DATASET/
 bkai_igh_neopoly/

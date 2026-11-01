@@ -100,12 +100,35 @@ interface ExperimentRecord {
   status: string;
 }
 
+const BACKEND_BASE_URL = "http://127.0.0.1:8000";
+
+async function apiFetch(endpoint: string, options?: RequestInit): Promise<Response> {
+  const path = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
+  try {
+    const res = await fetch(path, options);
+    // If Next.js rewrite proxy returns gateway failure:
+    if (res.status === 502 || res.status === 503 || res.status === 504) {
+      throw new Error(`Gateway Error (${res.status})`);
+    }
+    return res;
+  } catch (err: any) {
+    // If relative proxy failed or threw a network error, attempt direct connection to FastAPI backend
+    try {
+      const directUrl = `${BACKEND_BASE_URL}${path}`;
+      return await fetch(directUrl, options);
+    } catch (directErr: any) {
+      throw new Error(`FastAPI backend is unreachable at ${path} or ${BACKEND_BASE_URL}${path}. Please verify server is running.`);
+    }
+  }
+}
+
 export default function DeepPolypDashboard() {
   const [activeTab, setActiveTab] = useState<"segment" | "compare" | "eval" | "training" | "overview" | "about">("segment");
   const [models, setModels] = useState<ModelMetadata[]>([]);
   const [samples, setSamples] = useState<SampleImage[]>([]);
   const [experiments, setExperiments] = useState<ExperimentRecord[]>([]);
   const [systemHealth, setSystemHealth] = useState<any>(null);
+  const [isBackendAvailable, setIsBackendAvailable] = useState<boolean | null>(null);
 
   // Segmentation Studio state
   const [selectedModel, setSelectedModel] = useState<string>("segformer");
@@ -150,6 +173,18 @@ export default function DeepPolypDashboard() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const stopPolling = () => {
+    if (trainingPollRef.current) {
+      clearInterval(trainingPollRef.current);
+      trainingPollRef.current = null;
+    }
+  };
+
+  const startPolling = () => {
+    stopPolling();
+    trainingPollRef.current = setInterval(pollTrainingStatus, 1500);
+  };
+
   // Fetch initial data on mount
   useEffect(() => {
     fetchHealth();
@@ -159,76 +194,67 @@ export default function DeepPolypDashboard() {
     pollTrainingStatus();
 
     return () => {
-      if (trainingPollRef.current) {
-        clearInterval(trainingPollRef.current);
-      }
+      stopPolling();
     };
   }, []);
 
   const fetchHealth = async () => {
     try {
-      const res = await fetch("/api/health");
-      if (res.ok) setSystemHealth(await res.json());
-    } catch (e) {
-      // Direct fallback if rewrites lag
-      try {
-        const directRes = await fetch("http://127.0.0.1:8000/api/health");
-        if (directRes.ok) setSystemHealth(await directRes.json());
-      } catch (err) {
-        console.warn("Backend not yet connected", err);
+      const res = await apiFetch("/api/health");
+      if (res.ok) {
+        const data = await res.json();
+        setSystemHealth(data);
+        setIsBackendAvailable(true);
+      } else {
+        setIsBackendAvailable(false);
       }
+    } catch (e) {
+      setIsBackendAvailable(false);
+      console.warn("FastAPI backend is offline at http://127.0.0.1:8000");
     }
   };
 
   const fetchModels = async () => {
     try {
-      const res = await fetch("/api/models");
+      const res = await apiFetch("/api/models");
       if (res.ok) {
         setModels(await res.json());
-      } else {
-        const directRes = await fetch("http://127.0.0.1:8000/api/models");
-        if (directRes.ok) setModels(await directRes.json());
+        setIsBackendAvailable(true);
       }
     } catch (e) {
-      console.error(e);
+      console.warn("Could not load models list", e);
     }
   };
 
   const fetchSamples = async () => {
     try {
-      let data: SampleImage[] = [];
-      const res = await fetch("/api/samples");
+      const res = await apiFetch("/api/samples");
       if (res.ok) {
-        data = await res.json();
-      } else {
-        const directRes = await fetch("http://127.0.0.1:8000/api/samples");
-        if (directRes.ok) data = await directRes.json();
-      }
-
-      if (data && data.length > 0) {
-        setSamples(data);
-        setSelectedImageDataUri(data[0].image_data_uri);
-        setActiveSampleMaskDataUri(data[0].mask_data_uri || "");
-        setActiveSampleTitle(data[0].title);
-        // Automatically run initial prediction on sample 1 so reviewer sees live CADe output immediately
-        triggerPredictionWithDataUri(data[0].image_data_uri, "segformer", 0.50);
+        const data: SampleImage[] = await res.json();
+        if (data && data.length > 0) {
+          setSamples(data);
+          setSelectedImageDataUri(data[0].image_data_uri);
+          setActiveSampleMaskDataUri(data[0].mask_data_uri || "");
+          setActiveSampleTitle(data[0].title);
+          // Automatically run initial prediction on sample 1 so reviewer sees live CADe output immediately
+          triggerPredictionWithDataUri(data[0].image_data_uri, "segformer", 0.50);
+        }
+        setIsBackendAvailable(true);
       }
     } catch (e) {
-      console.error(e);
+      console.warn("Could not load sample images", e);
     }
   };
 
   const fetchExperiments = async () => {
     try {
-      const res = await fetch("/api/experiments");
+      const res = await apiFetch("/api/experiments");
       if (res.ok) {
         setExperiments(await res.json());
-      } else {
-        const directRes = await fetch("http://127.0.0.1:8000/api/experiments");
-        if (directRes.ok) setExperiments(await directRes.json());
+        setIsBackendAvailable(true);
       }
     } catch (e) {
-      console.error(e);
+      console.warn("Could not load experiments", e);
     }
   };
 
@@ -268,7 +294,7 @@ export default function DeepPolypDashboard() {
       formData.append("threshold", thresh.toString());
       formData.append("file", blob, "sample.jpg");
 
-      const res = await fetch("/api/predict", {
+      const res = await apiFetch("/api/predict", {
         method: "POST",
         body: formData,
       });
@@ -276,18 +302,10 @@ export default function DeepPolypDashboard() {
       if (res.ok) {
         const data = await res.json();
         setPrediction(data);
-      } else {
-        const directRes = await fetch("http://127.0.0.1:8000/api/predict", {
-          method: "POST",
-          body: formData,
-        });
-        if (directRes.ok) {
-          const directData = await directRes.json();
-          setPrediction(directData);
-        }
+        setIsBackendAvailable(true);
       }
-    } catch (e) {
-      console.error("Inference call error:", e);
+    } catch (e: any) {
+      console.warn("Inference call error:", e.message || e);
     } finally {
       setIsInferring(false);
     }
@@ -321,10 +339,7 @@ export default function DeepPolypDashboard() {
 
         if (hasGt && maskBlob) {
           formData.append("ground_truth_mask", maskBlob, "mask.png");
-          let evalRes = await fetch("/api/evaluate", { method: "POST", body: formData });
-          if (!evalRes.ok) {
-            evalRes = await fetch("http://127.0.0.1:8000/api/evaluate", { method: "POST", body: formData });
-          }
+          const evalRes = await apiFetch("/api/evaluate", { method: "POST", body: formData });
           if (evalRes.ok) {
             const evalData = await evalRes.json();
             resultsMap[mName] = {
@@ -345,10 +360,7 @@ export default function DeepPolypDashboard() {
             };
           }
         } else {
-          let predRes = await fetch("/api/predict", { method: "POST", body: formData });
-          if (!predRes.ok) {
-            predRes = await fetch("http://127.0.0.1:8000/api/predict", { method: "POST", body: formData });
-          }
+          const predRes = await apiFetch("/api/predict", { method: "POST", body: formData });
           if (predRes.ok) {
             const predData = await predRes.json();
             resultsMap[mName] = {
@@ -361,8 +373,9 @@ export default function DeepPolypDashboard() {
       }
 
       setComparisonResults(resultsMap);
-    } catch (e) {
-      console.error("Comparison error:", e);
+      setIsBackendAvailable(true);
+    } catch (e: any) {
+      console.warn("Comparison error:", e.message || e);
     } finally {
       setIsComparing(false);
     }
@@ -370,47 +383,59 @@ export default function DeepPolypDashboard() {
 
   const pollTrainingStatus = async () => {
     try {
-      let res = await fetch("/api/train/status");
+      const res = await apiFetch("/api/train/status");
       if (!res.ok) {
-        res = await fetch("http://127.0.0.1:8000/api/train/status");
+        console.warn("Training status query returned non-200 status:", res.status);
+        return;
       }
-      if (res.ok) {
-        const data = await res.json();
-        setTrainingStatus(data.status);
-        setTrainingProgress(data.progress_percent || 0);
-        if (data.history && data.history.length > 0) {
-          setTrainHistory(data.history);
-        }
-        setCurrentTrainLoss(data.train_loss);
-        setCurrentValDice(data.val_dice);
-        setCurrentValIoU(data.val_iou);
-        setCurrentLr(data.learning_rate);
-        setBestDice(data.best_dice);
-        setElapsedTimeSec(data.elapsed_time_sec || 0);
-        setDatasetUsed(data.dataset_used);
-        setDatasetPairs(data.dataset_pairs || 0);
-        setTrainingError(data.error_message);
 
-        if (data.status === "running") {
-          setIsTraining(true);
-        } else {
-          setIsTraining(false);
-          if (trainingPollRef.current) {
-            clearInterval(trainingPollRef.current);
-            trainingPollRef.current = null;
-          }
-          if (data.status === "completed") {
-            fetchHealth();
-            fetchModels();
-          }
+      const data = await res.json();
+      setIsBackendAvailable(true);
+      setTrainingStatus(data.status);
+      setTrainingProgress(data.progress_percent || 0);
+      if (data.history && data.history.length > 0) {
+        setTrainHistory(data.history);
+      }
+      setCurrentTrainLoss(data.train_loss);
+      setCurrentValDice(data.val_dice);
+      setCurrentValIoU(data.val_iou);
+      setCurrentLr(data.learning_rate);
+      setBestDice(data.best_dice);
+      setElapsedTimeSec(data.elapsed_time_sec || 0);
+      setDatasetUsed(data.dataset_used);
+      setDatasetPairs(data.dataset_pairs || 0);
+      setTrainingError(data.error_message);
+
+      if (data.status === "running") {
+        setIsTraining(true);
+        // Only start polling interval if not already started
+        if (!trainingPollRef.current) {
+          startPolling();
+        }
+      } else {
+        setIsTraining(false);
+        // Cleanly cease polling when there is no active job
+        stopPolling();
+        if (data.status === "completed") {
+          fetchHealth();
+          fetchModels();
         }
       }
-    } catch (e) {
-      console.warn("Error polling training status:", e);
+    } catch (e: any) {
+      // Backend is unavailable or stopped responding
+      setIsBackendAvailable(false);
+      setIsTraining(false);
+      stopPolling();
+      console.warn("FastAPI backend unavailable during training status check:", e.message || e);
     }
   };
 
   const startRealTraining = async () => {
+    if (isBackendAvailable === false) {
+      setTrainingError("FastAPI backend is offline. Start the backend on http://127.0.0.1:8000 before initiating training.");
+      return;
+    }
+
     setIsTraining(true);
     setTrainingStatus("running");
     setTrainingError(null);
@@ -427,45 +452,42 @@ export default function DeepPolypDashboard() {
         early_stopping_patience: 5,
       };
 
-      let res = await fetch("/api/train/start", {
+      const res = await apiFetch("/api/train/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
 
-      if (!res.ok) {
-        res = await fetch("http://127.0.0.1:8000/api/train/start", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-      }
-
       if (res.ok) {
-        if (trainingPollRef.current) clearInterval(trainingPollRef.current);
-        trainingPollRef.current = setInterval(pollTrainingStatus, 1000);
+        setIsBackendAvailable(true);
+        startPolling();
       } else {
-        const err = await res.json();
+        const err = await res.json().catch(() => ({}));
         setTrainingError(err.detail || "Failed to start training.");
         setIsTraining(false);
         setTrainingStatus("failed");
+        stopPolling();
       }
     } catch (e: any) {
+      setIsBackendAvailable(false);
       setTrainingError(e.message || "Failed to connect to training backend.");
       setIsTraining(false);
       setTrainingStatus("failed");
+      stopPolling();
     }
   };
 
   const stopRealTraining = async () => {
     try {
-      let res = await fetch("/api/train/stop", { method: "POST" });
-      if (!res.ok) {
-        res = await fetch("http://127.0.0.1:8000/api/train/stop", { method: "POST" });
+      const res = await apiFetch("/api/train/stop", { method: "POST" });
+      if (res.ok) {
+        await pollTrainingStatus();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setTrainingError(err.detail || "Failed to stop training.");
       }
-      pollTrainingStatus();
-    } catch (e) {
-      console.error("Error stopping training:", e);
+    } catch (e: any) {
+      console.warn("Error stopping training:", e.message || e);
     }
   };
 
@@ -649,16 +671,40 @@ export default function DeepPolypDashboard() {
 
           {/* Backend Status Pills */}
           <div className="flex items-center gap-2">
-            <div className="flex items-center gap-2 text-xs text-slate-300 bg-slate-900/90 border border-slate-800 px-3 py-1.5 rounded-full shadow-inner">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-              <span className="font-semibold text-emerald-400">FastAPI Online</span>
-              <span className="text-slate-600">•</span>
-              <span className="text-cyan-400 font-mono text-[11px] uppercase">
-                {systemHealth?.device || "CPU"}
-              </span>
-              <span className="hidden sm:inline-block text-slate-600">•</span>
-              <span className="hidden sm:inline-block text-[11px] text-slate-400">18 Tests Passed</span>
-            </div>
+            {isBackendAvailable === false ? (
+              <button
+                onClick={() => {
+                  fetchHealth();
+                  fetchModels();
+                  fetchSamples();
+                  fetchExperiments();
+                  pollTrainingStatus();
+                }}
+                title="FastAPI server is unreachable at http://127.0.0.1:8000. Click to retry connection."
+                className="flex items-center gap-2 text-xs text-rose-300 bg-rose-950/80 border border-rose-800 hover:border-rose-600 px-3 py-1.5 rounded-full shadow-inner transition-colors cursor-pointer"
+              >
+                <span className="w-2 h-2 rounded-full bg-rose-500"></span>
+                <span className="font-semibold text-rose-400">FastAPI Offline</span>
+                <span className="text-rose-600">•</span>
+                <span className="text-[11px] underline font-medium">Click to Retry</span>
+              </button>
+            ) : isBackendAvailable === true ? (
+              <div className="flex items-center gap-2 text-xs text-slate-300 bg-slate-900/90 border border-slate-800 px-3 py-1.5 rounded-full shadow-inner">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                <span className="font-semibold text-emerald-400">FastAPI Online</span>
+                <span className="text-slate-600">•</span>
+                <span className="text-cyan-400 font-mono text-[11px] uppercase">
+                  {systemHealth?.device || "CPU"}
+                </span>
+                <span className="hidden sm:inline-block text-slate-600">•</span>
+                <span className="hidden sm:inline-block text-[11px] text-slate-400">Connected</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-xs text-slate-400 bg-slate-900/90 border border-slate-800 px-3 py-1.5 rounded-full shadow-inner">
+                <RefreshCw className="w-3 h-3 text-cyan-400 animate-spin" />
+                <span>Connecting...</span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -708,6 +754,33 @@ export default function DeepPolypDashboard() {
 
       {/* Main Content Dashboard Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 space-y-6">
+
+        {/* Backend Offline Warning Banner */}
+        {isBackendAvailable === false && (
+          <div className="glass-panel border border-rose-800/80 bg-rose-950/40 p-4 rounded-2xl text-xs text-rose-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg shadow-rose-950/20">
+            <div className="flex items-start sm:items-center gap-3">
+              <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5 sm:mt-0" />
+              <div>
+                <p className="font-bold text-rose-100 text-sm">FastAPI Backend Unavailable</p>
+                <p className="text-rose-300 mt-0.5">
+                  Cannot reach FastAPI server at <code className="bg-slate-950 px-1.5 py-0.5 rounded text-rose-300 font-mono">http://127.0.0.1:8000</code>. Please start the backend using <code className="bg-slate-950 px-1.5 py-0.5 rounded text-cyan-300 font-mono">run_project.ps1</code> or run <code className="bg-slate-950 px-1.5 py-0.5 rounded text-cyan-300 font-mono">.\.venv\Scripts\uvicorn.exe backend.app.main:app --port 8000</code>.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => {
+                fetchHealth();
+                fetchModels();
+                fetchSamples();
+                fetchExperiments();
+                pollTrainingStatus();
+              }}
+              className="px-4 py-2 bg-rose-900 hover:bg-rose-800 border border-rose-700 text-white rounded-xl font-semibold text-xs shrink-0 cursor-pointer transition-all flex items-center justify-center gap-1.5 shadow-md"
+            >
+              <RefreshCw className="w-3.5 h-3.5" /> Reconnect
+            </button>
+          </div>
+        )}
 
         {/* ========================================================================= */}
         {/* TAB 1: SEGMENTATION STUDIO                                                */}
@@ -1666,6 +1739,16 @@ export default function DeepPolypDashboard() {
                   </div>
                 </div>
 
+                {isBackendAvailable === false && !trainingError && (
+                  <div className="p-3 bg-rose-950/80 border border-rose-800 text-rose-300 rounded-xl text-xs flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-semibold text-rose-200">Backend Server Offline</p>
+                      <p className="text-[11px] text-rose-300 mt-0.5">FastAPI server at http://127.0.0.1:8000 is unreachable. Start the backend to enable PyTorch model training.</p>
+                    </div>
+                  </div>
+                )}
+
                 {trainingError && (
                   <div className="p-3 bg-rose-950/80 border border-rose-800 text-rose-300 rounded-xl text-xs flex items-start gap-2">
                     <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
@@ -1676,12 +1759,16 @@ export default function DeepPolypDashboard() {
                 <div className="flex gap-2">
                   <button
                     onClick={startRealTraining}
-                    disabled={isTraining}
-                    className="flex-1 py-3 px-4 rounded-xl text-xs font-bold bg-cyan-600 hover:bg-cyan-500 text-white transition-all shadow-md shadow-cyan-600/30 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                    disabled={isTraining || isBackendAvailable === false}
+                    className="flex-1 py-3 px-4 rounded-xl text-xs font-bold bg-cyan-600 hover:bg-cyan-500 text-white transition-all shadow-md shadow-cyan-600/30 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {isTraining ? (
                       <>
                         <RefreshCw className="w-4 h-4 animate-spin" /> Training Epoch {trainHistory.length}/{trainEpochs} ({trainingProgress}%)...
+                      </>
+                    ) : isBackendAvailable === false ? (
+                      <>
+                        <AlertTriangle className="w-4 h-4 text-rose-300" /> Backend Offline (Port 8000)
                       </>
                     ) : (
                       <>

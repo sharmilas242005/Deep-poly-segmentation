@@ -1,0 +1,94 @@
+{
+  "config": {
+    "model_name": "segformer",
+    "dataset_dir": "data/sample_images",
+    "output_dir": "experiments/runs",
+    "image_size": 256,
+    "batch_size": 4,
+    "epochs": 10,
+    "learning_rate": 0.0005,
+    "weight_decay": 0.0001,
+    "random_seed": 42,
+    "device": "cpu",
+    "early_stopping_patience": 5
+  },
+  "history": {
+    "epoch": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ],
+    "train_loss": [
+      0.8451,
+      0.7708,
+      0.7084,
+      0.6595,
+      0.6266,
+      0.6027,
+      0.5857,
+      0.5719,
+      0.5596,
+      0.5493
+    ],
+    "val_loss": [
+      0.741,
+      0.6995,
+      0.6531,
+      0.6069,
+      0.5779,
+      0.5614,
+      0.5519,
+      0.5461,
+      0.5426,
+      0.5406
+    ],
+    "val_dice": [
+      0.2785,
+      0.3276,
+      0.9202,
+      0.9447,
+      0.9465,
+      0.9481,
+      0.9496,
+      0.9517,
+      0.9547,
+      0.9566
+    ],
+    "val_iou": [
+      0.1618,
+      0.1959,
+      0.8522,
+      0.8952,
+      0.8985,
+      0.9014,
+      0.904,
+      0.9078,
+      0.9133,
+      0.9168
+    ],
+    "learning_rate": [
+      0.0005,
+      0.0005,
+      0.0005,
+      0.0005,
+      0.0005,
+      0.0005,
+      0.0005,
+      0.0005,
+      0.0005,
+      0.0005
+    ]
+  },
+  "best_dice": 0.9566128067027897,
+  "best_iou": 0.9168339546896392,
+  "best_checkpoint": "experiments/runs\\segformer_1793434313\\best_checkpoint.pt",
+  "dataset_used": "data/sample_images",
+  "dataset_pairs": 3
+}

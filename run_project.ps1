@@ -18,7 +18,27 @@ Start-Process -FilePath "powershell.exe" -ArgumentList "-NoExit", "-Command", "c
 Write-Host "[2/2] Starting Next.js Web Studio on http://localhost:3000 ..." -ForegroundColor Cyan
 Start-Process -FilePath "powershell.exe" -ArgumentList "-NoExit", "-Command", "cd '$WorkspaceRoot\frontend'; npm run start"
 
-Start-Sleep -Seconds 3
+Write-Host "`nWaiting for FastAPI backend to initialize (PyTorch models loading)..." -ForegroundColor Cyan
+$BackendReady = $false
+for ($i = 0; $i -lt 15; $i++) {
+    Start-Sleep -Seconds 1
+    try {
+        $res = Invoke-WebRequest -Uri "http://127.0.0.1:8000/api/health" -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
+        if ($res.StatusCode -eq 200) {
+            $BackendReady = $true
+            break
+        }
+    } catch {
+        # Waiting for Uvicorn and PyTorch startup
+    }
+}
+
+if ($BackendReady) {
+    Write-Host "FastAPI backend is online and healthy!" -ForegroundColor Green
+} else {
+    Write-Host "[NOTE] FastAPI backend is still initializing; frontend will automatically connect when ready." -ForegroundColor Yellow
+}
+
 Write-Host "`nOpening Web Application..." -ForegroundColor Green
 Start-Process "http://localhost:3000"
 

@@ -71,22 +71,39 @@ def get_checkpoint_info(model_name: str, checkpoint_path: Optional[str] = None) 
 
     resolved_path = checkpoint_path
     if resolved_path is None:
-        default_ckpt = os.path.join("ml", "checkpoints", f"{key}_best.pt")
-        if os.path.isfile(default_ckpt):
-            resolved_path = default_ckpt
+        full_ckpt = os.path.join("ml", "checkpoints", f"{key}_kvasir_trained.pt")
+        if os.path.isfile(full_ckpt):
+            resolved_path = full_ckpt
+        else:
+            default_ckpt = os.path.join("ml", "checkpoints", f"{key}_best.pt")
+            if os.path.isfile(default_ckpt):
+                resolved_path = default_ckpt
 
     if resolved_path and os.path.isfile(resolved_path):
         size_mb = round(os.path.getsize(resolved_path) / (1024 * 1024), 2)
         filename = os.path.basename(resolved_path)
+        is_full_kvasir = "_kvasir_trained" in filename or "_kvasir_full" in filename
+
+        if is_full_kvasir:
+            training_type = "kvasir_full_700"
+            training_dataset = "Kvasir-SEG (700 train / 200 val / 100 test)"
+            dataset_details = "Trained on the genuine 700-image Kvasir-SEG training split with seed=42 and validated on 200 held-out validation images."
+            status_message = "Trained weights loaded (Full Kvasir-SEG 700-image split)"
+        else:
+            training_type = "sample_trained"
+            training_dataset = "3 Demo Cases (data/sample_images)"
+            dataset_details = "Trained on 3 sample endoscopy images in data/sample_images. NOT trained on the full 1,000-image Kvasir-SEG dataset."
+            status_message = "Sample-trained weights loaded (3 demo cases)"
+
         return {
             "checkpoint_available": True,
             "checkpoint_filename": filename,
             "checkpoint_path": os.path.abspath(resolved_path),
             "is_trained": True,
-            "training_type": "sample_trained",
-            "training_dataset": "3 Demo Cases (data/sample_images)",
-            "dataset_details": "Trained on 3 sample endoscopy images in data/sample_images. NOT trained on the full 1,000-image Kvasir-SEG dataset.",
-            "status_message": "Sample-trained weights loaded (3 demo cases)",
+            "training_type": training_type,
+            "training_dataset": training_dataset,
+            "dataset_details": dataset_details,
+            "status_message": status_message,
             "checkpoint_size_mb": size_mb
         }
 

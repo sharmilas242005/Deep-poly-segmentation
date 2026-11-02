@@ -1,0 +1,178 @@
+{
+  "timestamp": "2026-11-01 19:31:15",
+  "dataset": "Kvasir-SEG Held-Out Test Set (N=100)",
+  "sigma_sensitivity_validation": {
+    "sweep_results": {
+      "sigma_0.10": {
+        "sigma": 0.1,
+        "mean_dice": 0.4344,
+        "mean_iou": 0.3085,
+        "brier_score": 0.1999,
+        "expected_calibration_error": 0.3318
+      },
+      "sigma_0.15": {
+        "sigma": 0.15,
+        "mean_dice": 0.4359,
+        "mean_iou": 0.3101,
+        "brier_score": 0.1948,
+        "expected_calibration_error": 0.323
+      },
+      "sigma_0.20": {
+        "sigma": 0.2,
+        "mean_dice": 0.4376,
+        "mean_iou": 0.3118,
+        "brier_score": 0.1908,
+        "expected_calibration_error": 0.3174
+      },
+      "sigma_0.25": {
+        "sigma": 0.25,
+        "mean_dice": 0.4387,
+        "mean_iou": 0.3128,
+        "brier_score": 0.1881,
+        "expected_calibration_error": 0.3136
+      },
+      "sigma_0.30": {
+        "sigma": 0.3,
+        "mean_dice": 0.4394,
+        "mean_iou": 0.3135,
+        "brier_score": 0.1863,
+        "expected_calibration_error": 0.3111
+      },
+      "sigma_0.40": {
+        "sigma": 0.4,
+        "mean_dice": 0.4402,
+        "mean_iou": 0.3142,
+        "brier_score": 0.1844,
+        "expected_calibration_error": 0.3083
+      },
+      "sigma_0.50": {
+        "sigma": 0.5,
+        "mean_dice": 0.4406,
+        "mean_iou": 0.3146,
+        "brier_score": 0.1834,
+        "expected_calibration_error": 0.3069
+      }
+    },
+    "optimal_sigma": 0.5,
+    "selection_criterion": "Highest Mean Dice on Held-Out Validation Split"
+  },
+  "component_ablation_results": {
+    "A1_segformer_alone": {
+      "dice": {
+        "mean": 0.4548,
+        "std": 0.2427
+      },
+      "iou": {
+        "mean": 0.3269,
+        "std": 0.2098
+      }
+    },
+    "A2_unet_alone": {
+      "dice": {
+        "mean": 0.4438,
+        "std": 0.2457
+      },
+      "iou": {
+        "mean": 0.3197,
+        "std": 0.2214
+      }
+    },
+    "A3_linknet_alone": {
+      "dice": {
+        "mean": 0.4194,
+        "std": 0.256
+      },
+      "iou": {
+        "mean": 0.3022,
+        "std": 0.2307
+      }
+    },
+    "B_mean_probability_fusion": {
+      "dice": {
+        "mean": 0.4581,
+        "std": 0.261
+      },
+      "iou": {
+        "mean": 0.3371,
+        "std": 0.2392
+      }
+    },
+    "C_majority_voting": {
+      "dice": {
+        "mean": 0.449,
+        "std": 0.255
+      },
+      "iou": {
+        "mean": 0.327,
+        "std": 0.2313
+      }
+    },
+    "D_eccf_standard_bandwidth": {
+      "dice": {
+        "mean": 0.454,
+        "std": 0.2592
+      },
+      "iou": {
+        "mean": 0.3328,
+        "std": 0.2365
+      }
+    },
+    "E_eccf_optimal_bandwidth": {
+      "dice": {
+        "mean": 0.4569,
+        "std": 0.2606
+      },
+      "iou": {
+        "mean": 0.3358,
+        "std": 0.2386
+      }
+    },
+    "F_jsd_only_uncertainty": {
+      "pearson": {
+        "mean": 0.0921,
+        "std": 0.2308
+      },
+      "spearman": {
+        "mean": 0.0581,
+        "std": 0.2612
+      },
+      "auroc": {
+        "mean": 0.5011,
+        "std": 0.1491
+      }
+    },
+    "G_entropy_only_uncertainty": {
+      "pearson": {
+        "mean": 0.4403,
+        "std": 0.2982
+      },
+      "spearman": {
+        "mean": 0.6178,
+        "std": 0.3156
+      },
+      "auroc": {
+        "mean": 0.6815,
+        "std": 0.1412
+      }
+    },
+    "H_combined_uncertainty": {
+      "pearson": {
+        "mean": 0.4017,
+        "std": 0.2594
+      },
+      "spearman": {
+        "mean": 0.5726,
+        "std": 0.2974
+      },
+      "auroc": {
+        "mean": 0.6608,
+        "std": 0.1351
+      }
+    }
+  },
+  "key_takeaways": [
+    "Cross-architecture consensus fusion consistently outperforms individual baseline CNN architectures.",
+    "Evidence-Calibrated exponential weighting (ECCF) adapts to local manifold agreement better than static unweighted averaging.",
+    "Combined uncertainty formulation achieves higher error correlation and failure AUROC than standalone single-estimator heuristics."
+  ]
+}

@@ -30,6 +30,7 @@ class PredictionResponse(BaseModel):
     detected_regions_count: int
     original_image_data_uri: str
     mask_data_uri: str
+    probability_map_data_uri: Optional[str] = None
     overlay_data_uri: str
     metrics: Optional[Dict[str, float]] = None
     disclaimer: str = Field(
@@ -162,4 +163,65 @@ class EvaluationResponse(BaseModel):
     disclaimer: str = Field(
         default="RESEARCH PROTOTYPE ONLY: This software is for academic benchmarking and algorithmic comparison. It is NOT certified for diagnostic use without clinical specialist verification."
     )
+
+
+class ResearchAnalysisResponse(BaseModel):
+    polyp_detected: bool
+    polyp_area_percentage: float
+    original_image_data_uri: str
+    fused_mask_data_uri: str
+    fused_overlay_data_uri: str
+    disagreement_heatmap_data_uri: str
+    boundary_ambiguity_data_uri: str
+    clinical_failure_risk_index: float
+    risk_level: str
+    mean_epistemic_disagreement: float
+    boundary_disagreement_ratio: float
+    models_fused: List[str]
+    has_ground_truth: bool = False
+    ground_truth_mask_data_uri: Optional[str] = None
+    fused_metrics: Optional[Dict[str, float]] = None
+    model_metrics: Optional[Dict[str, Dict[str, float]]] = None
+    inference_time_ms: float
+    disclaimer: str = Field(
+        default="RESEARCH CONTRIBUTION ONLY: Multi-Architecture Epistemic Disagreement and Evidence-Calibrated Reliability Auditing (MED-ECRA). Not approved as a sole diagnostic instrument."
+    )
+
+
+class ModelPredictionItem(BaseModel):
+    model_name: str
+    mask_data_uri: str
+    probability_map_data_uri: str
+    inference_time_ms: float
+    polyp_detected: bool
+    polyp_area_percentage: float
+
+
+class DisagreementAnalysisResponse(BaseModel):
+    models_evaluated: List[str]
+    model_predictions: Dict[str, ModelPredictionItem]
+    mean_probability_map_data_uri: str
+    fused_probability_map_data_uri: Optional[str] = None
+    consensus_mask_data_uri: str
+    consensus_overlay_data_uri: str
+    fused_mask_data_uri: str
+    fused_overlay_data_uri: str
+    jsd_heatmap_data_uri: str
+    predictive_entropy_heatmap_data_uri: str
+    boundary_disagreement_heatmap_data_uri: str
+    model_disagreement_indicator: float
+    reliability_level: str
+    mean_jsd: float
+    mean_predictive_entropy: float
+    boundary_disagreement_ratio: float
+    total_inference_time_ms: float
+    fusion_time_ms: Optional[float] = None
+    polyp_detected: bool
+    polyp_area_percentage: float
+    evaluation_metrics: Optional[Dict[str, Any]] = None
+    disclaimer: str = Field(
+        default="EXPERIMENTAL MODEL-RELIABILITY ASSESSMENT: This research module computes multi-architecture epistemic variance and boundary disagreement. It is designed exclusively for algorithmic failure auditing and is NOT a medical diagnostic tool."
+    )
+
+
 

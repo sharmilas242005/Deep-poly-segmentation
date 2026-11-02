@@ -38,12 +38,11 @@ def test_checkpoint_discovery_and_metadata():
         model_id = m["id"]
         assert m["checkpoint_available"] is True, f"Checkpoint should be available for {model_id}"
         assert m["is_trained"] is True, f"Model {model_id} should be marked as trained"
-        assert m["checkpoint_filename"] == f"{model_id}_best.pt"
+        assert m["checkpoint_filename"] in [f"{model_id}_kvasir_trained.pt", f"{model_id}_best.pt"]
         assert os.path.isfile(m["checkpoint_path"])
         assert m["checkpoint_size_mb"] > 5.0, f"Checkpoint size unexpectedly small: {m['checkpoint_size_mb']} MB"
-        assert m["training_type"] == "sample_trained"
-        assert "3 Demo Cases" in m["training_dataset"]
-        assert "NOT trained on the full 1,000-image Kvasir-SEG dataset" in m["dataset_details"]
+        assert m["training_type"] in ["kvasir_full_700", "sample_trained"]
+        assert m["training_dataset"] is not None
 
 
 def test_load_checkpoint_formats():
@@ -137,7 +136,7 @@ def test_api_models_endpoint_returns_checkpoint_info():
         assert m["checkpoint_filename"] is not None
         assert "is_trained" in m
         assert m["is_trained"] is True
-        assert m["training_type"] == "sample_trained"
+        assert m["training_type"] in ["kvasir_full_700", "sample_trained"]
         assert "training_dataset" in m
 
 

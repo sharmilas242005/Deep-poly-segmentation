@@ -1,0 +1,11 @@
+Configuration,Component Description,Dice Mean,Dice Std,IoU Mean,AUROC,Pearson r,Spearman r
+A1_segformer_alone,A1 Segformer Alone,0.4548,0.2427,0.3269,N/A,N/A,N/A
+A2_unet_alone,A2 Unet Alone,0.4438,0.2457,0.3197,N/A,N/A,N/A
+A3_linknet_alone,A3 Linknet Alone,0.4194,0.2560,0.3022,N/A,N/A,N/A
+B_mean_probability_fusion,B Mean Probability Fusion,0.4581,0.2610,0.3371,N/A,N/A,N/A
+C_majority_voting,C Majority Voting,0.4490,0.2550,0.3270,N/A,N/A,N/A
+D_eccf_standard_bandwidth,D Eccf Standard Bandwidth,0.4540,0.2592,0.3328,N/A,N/A,N/A
+E_eccf_optimal_bandwidth,E Eccf Optimal Bandwidth,0.4569,0.2606,0.3358,N/A,N/A,N/A
+F_jsd_only_uncertainty,F Jsd Only Uncertainty,N/A,N/A,N/A,0.5011,0.0921,0.0581
+G_entropy_only_uncertainty,G Entropy Only Uncertainty,N/A,N/A,N/A,0.6815,0.4403,0.6178
+H_combined_uncertainty,H Combined Uncertainty,N/A,N/A,N/A,0.6608,0.4017,0.5726

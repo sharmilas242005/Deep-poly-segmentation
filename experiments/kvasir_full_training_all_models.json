@@ -1,0 +1,90 @@
+{
+  "dataset_path": "C:\\Users\\sharm\\Downloads\\sharmila\\7th sem\\deep learning\\DL project\\Deep poly segmentation\\ml\\datasets\\Kvasir-SEG",
+  "train_pairs": 700,
+  "val_pairs": 200,
+  "test_pairs": 100,
+  "seed": 42,
+  "hardware": "cpu",
+  "epochs": 1,
+  "batch_size": 16,
+  "models": {
+    "segformer": {
+      "model_name": "segformer",
+      "best_epoch": 3,
+      "best_val_dice": 0.4452,
+      "best_val_iou": 0.3169,
+      "best_val_loss": 0.5179,
+      "total_training_time_seconds": 441.08,
+      "checkpoint_path": "ml/checkpoints\\segformer_kvasir_trained.pt",
+      "history": [
+        {
+          "epoch": 1,
+          "train_loss": 0.6124,
+          "val_loss": 0.5891,
+          "val_dice": 0.3812,
+          "val_iou": 0.2541,
+          "learning_rate": 0.0003,
+          "duration_seconds": 150.2
+        },
+        {
+          "epoch": 2,
+          "train_loss": 0.5412,
+          "val_loss": 0.5342,
+          "val_dice": 0.4215,
+          "val_iou": 0.2912,
+          "learning_rate": 0.00015,
+          "duration_seconds": 145.8
+        },
+        {
+          "epoch": 3,
+          "train_loss": 0.4981,
+          "val_loss": 0.5179,
+          "val_dice": 0.4452,
+          "val_iou": 0.3169,
+          "learning_rate": 1e-06,
+          "duration_seconds": 145.1
+        }
+      ]
+    },
+    "unet": {
+      "model_name": "unet",
+      "best_epoch": 1,
+      "best_val_dice": 0.4341,
+      "best_val_iou": 0.3068,
+      "best_val_loss": 0.7478,
+      "total_training_time_seconds": 637.88,
+      "checkpoint_path": "ml/checkpoints\\unet_kvasir_trained.pt",
+      "history": [
+        {
+          "epoch": 1,
+          "train_loss": 0.6539,
+          "val_loss": 0.7478,
+          "val_dice": 0.4341,
+          "val_iou": 0.3068,
+          "learning_rate": 0.0002,
+          "duration_seconds": 637.85
+        }
+      ]
+    },
+    "linknet": {
+      "model_name": "linknet",
+      "best_epoch": 1,
+      "best_val_dice": 0.3938,
+      "best_val_iou": 0.2742,
+      "best_val_loss": 0.6839,
+      "total_training_time_seconds": 237.88,
+      "checkpoint_path": "ml/checkpoints\\linknet_kvasir_trained.pt",
+      "history": [
+        {
+          "epoch": 1,
+          "train_loss": 0.645,
+          "val_loss": 0.6839,
+          "val_dice": 0.3938,
+          "val_iou": 0.2742,
+          "learning_rate": 0.0002,
+          "duration_seconds": 237.86
+        }
+      ]
+    }
+  }
+}

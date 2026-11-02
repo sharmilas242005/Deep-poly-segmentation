@@ -1,0 +1,46 @@
+{
+  "config": {
+    "model_name": "segformer",
+    "dataset_dir": "C:\\Users\\sharm\\Downloads\\sharmila\\7th sem\\deep learning\\DL project\\Deep poly segmentation\\data/sample_images",
+    "output_dir": "experiments/runs",
+    "image_size": 256,
+    "batch_size": 2,
+    "epochs": 2,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "random_seed": 42,
+    "device": "cpu",
+    "early_stopping_patience": 3
+  },
+  "history": {
+    "epoch": [
+      1,
+      2
+    ],
+    "train_loss": [
+      0.844,
+      0.7647
+    ],
+    "val_loss": [
+      0.7354,
+      0.6733
+    ],
+    "val_dice": [
+      0.2841,
+      0.7337
+    ],
+    "val_iou": [
+      0.1656,
+      0.5794
+    ],
+    "learning_rate": [
+      0.001,
+      0.001
+    ]
+  },
+  "best_dice": 0.7336642465560318,
+  "best_iou": 0.57935997192079,
+  "best_checkpoint": "experiments/runs\\segformer_1793534409\\best_checkpoint.pt",
+  "dataset_used": "C:\\Users\\sharm\\Downloads\\sharmila\\7th sem\\deep learning\\DL project\\Deep poly segmentation\\data/sample_images",
+  "dataset_pairs": 3
+}

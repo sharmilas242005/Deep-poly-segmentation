@@ -1,0 +1,25 @@
+{
+  "model": "SegFormer-B0",
+  "dataset": "Kvasir-SEG (1,000 images)",
+  "train_samples": 700,
+  "val_samples": 200,
+  "test_samples": 100,
+  "epochs": 1,
+  "batch_size": 4,
+  "learning_rate": 0.0003,
+  "device": "cpu",
+  "seed": 42,
+  "total_training_seconds": 149.03,
+  "best_val_dice": 0.4109,
+  "checkpoint_path": "ml/checkpoints/segformer_kvasir_full_research.pt",
+  "history": [
+    {
+      "epoch": 1,
+      "train_loss": 0.5656,
+      "val_loss": 0.5349,
+      "val_dice": 0.4109,
+      "val_iou": 0.2869,
+      "epoch_duration_seconds": 148.98
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "audit_timestamp": "2026-11-01 18:57:50",
+  "training_domain": "Kvasir-SEG (Gastrointestinal Endoscopy)",
+  "protocol": "Zero-shot out-of-distribution evaluation (No domain adaptation or fine-tuning)",
+  "datasets": {
+    "CVC-ClinicDB": {
+      "status": "pending_external_upload",
+      "expected_paths": [
+        "ml/datasets/CVC-ClinicDB",
+        "data/CVC-ClinicDB"
+      ],
+      "env_variable": "CLINICDB_DIR",
+      "description": "Standard colonoscopy benchmark with 612 polyp frames.",
+      "notice": "External dataset not present in local workspace. Auto-download was withheld per strict preservation instructions."
+    },
+    "CVC-ColonDB": {
+      "status": "pending_external_upload",
+      "expected_paths": [
+        "ml/datasets/CVC-ColonDB",
+        "data/CVC-ColonDB"
+      ],
+      "env_variable": "COLONDB_DIR",
+      "description": "Challenging colonoscopy video frames containing specular glare.",
+      "notice": "External dataset not present in local workspace. Auto-download was withheld per strict preservation instructions."
+    },
+    "ETIS-LaribPolypDB": {
+      "status": "pending_external_upload",
+      "expected_paths": [
+        "ml/datasets/ETIS-LaribPolypDB",
+        "data/ETIS-LaribPolypDB"
+      ],
+      "env_variable": "ETIS_DIR",
+      "description": "High-definition endoscopic database with diminutive sessile polyps.",
+      "notice": "External dataset not present in local workspace. Auto-download was withheld per strict preservation instructions."
+    }
+  },
+  "overall_status": "pending_external_datasets",
+  "recommendation": "Place CVC-ClinicDB or ETIS-LaribPolypDB in ml/datasets/ to automatically trigger out-of-distribution validation."
+}

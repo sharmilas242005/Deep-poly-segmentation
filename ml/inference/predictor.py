@@ -74,11 +74,12 @@ class PolypPredictor:
         threshold: float = 0.5,
         target_size: Tuple[int, int] = (256, 256),
         overlay_color: Tuple[int, int, int] = (0, 220, 180),  # Bright medical turquoise
-        overlay_alpha: float = 0.45
-    ) -> Dict[str, Any]:
+        overlay_alpha: float = 0.45,
+        return_raw_prob_map: bool = False
+    ) -> Union[Dict[str, Any], Tuple[Dict[str, Any], np.ndarray]]:
         """
-        Executes segmentation inference, produces binary mask, overlay, and clinical summary.
-        Strictly requires trained model weights.
+        Executes segmentation inference, produces continuous probability map, binary mask,
+        overlay, and clinical summary. Strictly requires trained model weights.
         """
         # 1. Parse input into PIL Image
         if isinstance(image_input, str):
@@ -97,16 +98,21 @@ class PolypPredictor:
 
         # 2. Model Forward Pass with precise latency profiling
         model = self.get_model(model_name)
+        if torch.cuda.is_available() and self.device == "cuda":
+            torch.cuda.synchronize()
         start_time = time.perf_counter()
         with torch.no_grad():
             logits = model(tensor)
             probs = torch.sigmoid(logits)
+        if torch.cuda.is_available() and self.device == "cuda":
+            torch.cuda.synchronize()
         latency_ms = (time.perf_counter() - start_time) * 1000.0
 
-        # 3. Extract probabilities and threshold to binary mask
+        # 3. Extract continuous probabilities [0, 1] before thresholding
         prob_map_256 = probs.squeeze().cpu().numpy()  # (256, 256)
         # Resize probability map back to original image dimensions with Bilinear interpolation
         prob_map_orig = cv2.resize(prob_map_256, (orig_w, orig_h), interpolation=cv2.INTER_LINEAR)
+        prob_map_orig = np.clip(prob_map_orig, 0.0, 1.0).astype(np.float32)
         binary_mask_orig = (prob_map_orig >= threshold).astype(np.uint8) * 255
 
         # 4. Compute polyp coverage and bounding boxes
@@ -147,12 +153,15 @@ class PolypPredictor:
         # 6. Format PIL outputs and Base64 Data URIs
         mask_pil = Image.fromarray(binary_mask_orig, mode="L")
         overlay_pil = Image.fromarray(overlay_np, mode="RGB")
+        prob_uint8 = (prob_map_orig * 255.0).astype(np.uint8)
+        prob_pil = Image.fromarray(prob_uint8, mode="L")
 
         orig_b64 = self._image_to_data_uri(orig_pil)
         mask_b64 = self._image_to_data_uri(mask_pil)
+        prob_b64 = self._image_to_data_uri(prob_pil)
         overlay_b64 = self._image_to_data_uri(overlay_pil)
 
-        return {
+        result_dict = {
             "model_name": model_name,
             "inference_time_ms": round(latency_ms, 2),
             "polyp_detected": bool(has_polyp),
@@ -163,8 +172,14 @@ class PolypPredictor:
             "detected_regions_count": len(bounding_boxes),
             "original_image_data_uri": orig_b64,
             "mask_data_uri": mask_b64,
+            "probability_map_data_uri": prob_b64,
             "overlay_data_uri": overlay_b64
         }
+
+        if return_raw_prob_map:
+            return result_dict, prob_map_orig
+
+        return result_dict
 
     def compare_models(
         self,

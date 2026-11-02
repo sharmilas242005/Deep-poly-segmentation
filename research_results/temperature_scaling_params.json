@@ -1,0 +1,20 @@
+{
+  "segformer": {
+    "temperature": 1.1527,
+    "checkpoint_used": "ml/checkpoints/segformer_kvasir_trained.pt",
+    "dataset": "Kvasir-SEG Validation Split (200 pairs)",
+    "learned_at": "2026-11-01 19:13:02"
+  },
+  "unet": {
+    "temperature": 2.2353,
+    "checkpoint_used": "ml/checkpoints/unet_kvasir_trained.pt",
+    "dataset": "Kvasir-SEG Validation Split (200 pairs)",
+    "learned_at": "2026-11-01 19:14:25"
+  },
+  "linknet": {
+    "temperature": 1.2185,
+    "checkpoint_used": "ml/checkpoints/linknet_kvasir_trained.pt",
+    "dataset": "Kvasir-SEG Validation Split (200 pairs)",
+    "learned_at": "2026-11-01 19:15:13"
+  }
+}
